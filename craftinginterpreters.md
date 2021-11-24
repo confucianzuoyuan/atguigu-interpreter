@@ -1287,7 +1287,17 @@ number     = "0"..."9" ;
 -> "1" "+" "2" "+" "3"
 ```
 
-这样展开，就匹配成功了，说明`1+2+3`表达式符合我们所定义的语法。而`1+2-3`就不符合我们的语法了。
+这样展开，就匹配成功了，说明`1+2+3`表达式符合我们所定义的语法。而`1+2-3`就不符合我们的语法了。我们可以将展开的过程表达为一颗树：
+
+```mermaid
+graph TB
+	A(("+")) --> B(("1"))
+	A --> C(("+"))
+	C --> D(("2"))
+	C --> E(("3"))
+```
+
+在这个过程中，我们可以看到，每碰到一个数值，就作为叶子节点，每碰到一个运算符，就作为内部节点。
 
 ### $3.2.2$ $EBNF$中的正则符号
 
@@ -1325,17 +1335,53 @@ number     = "0"..."9" ;
   number = ( "-" | "+" )? "1" ;
   ```
 
+我们现在可以来举一个复杂一点的文法，来研究一下。这个文法定义了包含乘法和加法的表达式语法。
 
+```js
+expression = term ( "+" term)* ;
+term       = NUMBER ( "*" NUMBER)* ;
+NUMBER     = DIGIT+ ( "." DIGIT+ )? ;
+DIGIT      = "0" ... "9" ;
+```
 
-在本书的其余部分中，我们将使用这种表示法来精确地描述$Atguigu$的语法。当您使用编程语言时，您会发现上下文无关的语法（使用此语法或EBNF或其他一些符号）可以帮助您将非正式的语法设计思想具体化。
+想出这个文法并不容易，因为我们要在文法中体现乘法的优先级比加法要高。所以多看编程语言的文法会有助于我们设计自己的各种类型的语言。我们在文法中，先将`expression`展开成加法操作，然后再将`term`展开成乘法的操作，先加法后乘法，这样优先级就可以得到保证了。
 
-我们为$Atguigu$定义的规则和生成式也是我们将要实现的树数据结构（用于表示内存中的代码）的指南。在此之前，我们需要为$Atguigu$编写一个实际的语法，或者至少要有一个足够上手的语法。
+我们来举个例子，`1 + 2 * 3`表达式，看看这个表达式是否符合我们定义的文法。第一个`term`是`1`，第二个`term`是`2 * 3`，那么通过推导，我们可以形成一棵树：
+
+```mermaid
+graph TB
+	A --> C(("1"))
+	A(("+")) --> B(("*"))
+	B --> D(("2"))
+	B --> E(("3"))
+```
+
+如果我们使用后序遍历的方式，可以正确的进行求值。而如果将文法定义成以下错误的文法：
+
+```js
+expression = term ( "*" term)* ;
+term       = NUMBER ( "+" NUMBER)* ;
+NUMBER     = DIGIT+ ( "." DIGIT+ )? ;
+DIGIT      = "0" ... "9" ;
+```
+
+那么形成的树形结构是：
+
+```mermaid
+graph TB
+	A(("*")) --> B(("+"))
+	A --> C(("3"))
+	B --> D(("1"))
+	B --> E(("2"))
+```
+
+这样优先级就不对了，计算出来的结果当然也是不对的。
+
+接下来，我们将使用这种表示法来精确地描述$Atguigu$语言的语法。当我们在使用编程语言时，会发现上下文无关的文法（例如$EBNF$）可以帮助我们将非正式的语法设计思想具体化。
 
 ### $3.2.3$ $Atguigu$表达式语法
 
-在上一章中，我们一气呵成地完成了$Atguigu$的全部词汇语法，包括每一个关键词和标点符号。但句法语法的规模更大，如果在我们真正启动并运行解释器之前，就要把整个语法啃完，那就太无聊了。
-
-相反，我们将在接下来的几章中摸索该语言的一个子集。一旦我们可以对这个迷你语言进行表示、解析和解释，那么在之后的章节中将逐步为它添加新的特性，包括新的语法。现在，我们只关心几个表达式：
+我们将在接下来的几章中摸索$Atguigu$语言的一个子集，也就是从一个语言的子集开始设计，然后慢慢扩充语言的功能。一旦我们可以对这个小型语言进行表示、语法分析和解释执行，那么在之后的章节中将逐步为它添加新的特性，包括新的语法。现在，我们只关心几个表达式：
 
 - **字面量**。数字、字符串、布尔值以及`nil`。
 
@@ -1354,400 +1400,102 @@ number     = "0"..."9" ;
 使用我们的新符号，下面是语法的表示：
 
 ```js
-expression     → literal
+expression     = literal
                | unary
                | binary
                | grouping ;
 
-literal        → NUMBER | STRING | "true" | "false" | "nil" ;
-grouping       → "(" expression ")" ;
-unary          → ( "-" | "!" ) expression ;
-binary         → expression operator expression ;
-operator       → "==" | "!=" | "<" | "<=" | ">" | ">="
+literal        = NUMBER | STRING | "true" | "false" | "nil" ;
+grouping       = "(" expression ")" ;
+unary          = ( "-" | "!" ) expression ;
+binary         = expression operator expression ;
+operator       = "==" | "!=" | "<" | "<=" | ">" | ">="
                | "+"  | "-"  | "*" | "/" ;
 ```
 
-这里有一点额外的元语法。除了与精确词素相匹配的终止符会加引号外，我们还对表示单一词素的终止符进行 **大写化** ，这些词素的文本表示方式可能会有所不同。`NUMBER`是任何数字字面量，`STRING`是任何字符串字面量。稍后，我们将对`IDENTIFIER`进行同样的处理。
+`NUMBER`是任何数字字面量，`STRING`是任何字符串字面量。稍后，我们将对`IDENTIFIER`进行同样的处理。
 
-这个语法实际上是模棱两可的，我们在解析它时就会看到这一点。但现在这已经足够了。
+这个定义的文法其实是有歧义的，我们在解析的时候就明白了。
 
-## $3.2$ 实现语法树
+## $3.3$ 实现语法树
 
-最后，我们要写一些代码。这个小小的表达式语法就是我们的骨架。由于语法是递归的—请注意`grouping`，`unary`，和`binary`都是指回`expression`的—我们的数据结构将形成一棵树。因为这个结构代表了我们语言的语法，所以叫做**语法树**。
+最后，我们要写一些代码。这个小小的表达式语法就是我们的骨架。由于语法是递归的—请注意`grouping`，`unary`，和`binary`都是指回`expression`的—我们的数据结构将形成一棵树。因为这个结构代表了我们语言的语法，所以叫做**抽象语法树**。我们之前已经定义过几种抽象语法树的节点类型了。
 
-我们的扫描器使用一个单一的 `Token` 类来表示所有类型的词素。为了区分不同的种类—想想数字 `123` 和字符串 `"123"`—我们创建了一个简单的 `TokenType` 枚举。语法树并不是那么同质的。一元表达式只有一个操作数，二元表达式有两个操作数，而字面量则没有。
+`Expr`是所有表达式类继承的基类。例如`Binary`类和`Literal`类都继承了`Expr`基类。
 
-我们 **可以** 将所有这些内容整合到一个包含任意子类列表的 `Expression` 类中。有些编译器会这么做。但我希望充分利用$Java$的类型系统。所以我们将为表达式定义一个基类。然后，对于每一种表达式—`expression`下的每一个生成式—我们创建一个子类，这个子类有该规则所特有的非终止符字段。这样，如果试图访问一元表达式的第二个操作数，就会得到一个编译错误。
+接下来我们定义其它节点类型，我们先来定义一元运算符所对应的`Unary`类。
 
-类似这样：
+> 创建新文件`Unary.java`
 
 ```java
 package com.atguigu;
 
-public abstract class Expr { 
-  static class Binary extends Expr {
-    Binary(Expr left, Token operator, Expr right) {
-      this.left = left;
-      this.operator = operator;
-      this.right = right;
+public class Unary extends Expr {
+    public final Token operator;
+    public final Expr right;
+
+    public Unary(Token operator, Expr right) {
+        this.operator = operator;
+        this.right = right;
     }
-
-    final Expr left;
-    final Token operator;
-    final Expr right;
-  }
-
-  // Other expressions...
 }
 ```
 
-`Expr`是所有表达式类继承的基类。从`Binary`中可以看到，子类都嵌套在它的内部。这在技术上没有必要，但它允许我们将所有类都塞进一个$Java$文件中。
+一元运算符只有一个`right`表达式，表示一元运算符右边的表达式。
 
-### $3.2.1$ 非面向对象
+我们再来定义用括号扩起来的表达式的类`Grouping`，来表示这样的表达式：`(1 + 2)`，可以看到括号里面有一个表达式。
 
-你会注意到，（表达式类）像`Token`类一样，其中没有任何方法。这是一个很愚蠢的结构，巧妙的类型封装，但仅仅是一包数据。这在$Java$这样的面向对象语言中会有些奇怪，难道类不是应该**做一些事情**吗？
-
-问题在于这些树类不属于任何单个的领域。树是在解析的时候创建的，难道类中应该有解析对应的方法？或者因为树结构在解释的时候被消费，其中是不是要提供解释相关的方法？树跨越了这些领域之间的边界，这意味着它们实际上不属于任何一方。
-
-事实上，这些类型的存在是为了让语法分析器和解释器能够*进行交流*。这就适合于那些只是简单的数据而没有相关行为的类型。
-
-### $3.2.2$ 节点树元编程
-
-Java可以表达无行为的类，但很难说它特别擅长。用11行代码在一个对象中填充3个字段是相当乏味的，当我们全部完成后，我们将有21个这样的类。
-
-我不想浪费你的时间或我的墨水把这些都写下来。真的，每个子类的本质是什么?一个名称和一个字段列表而已。我们是聪明的语言黑客，对吧?我们把它自动化。
-
-与其繁琐地手写每个类的定义、字段声明、构造函数和初始化器，我们一起编写一个脚本来完成任务。 它具有每种树类型（名称和字段）的描述，并打印出定义具有该名称和状态的类所需的Java代码。
-
-该脚本是一个微型Java命令行应用程序，它生成一个名为“ Expr.java”的文件：
-
-*<u>tool/GenerateAst.java，创建新文件</u>*
+> 创建新文件`Grouping.java`
 
 ```java
-package com.craftinginterpreters.tool;
+package com.atguigu;
 
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.util.Arrays;
-import java.util.List;
+public class Grouping extends Expr {
+    public final Expr expression;
 
-public class GenerateAst {
-  public static void main(String[] args) throws IOException {
-    if (args.length != 1) {
-      System.err.println("Usage: generate_ast <output directory>");
-      System.exit(64);
+    public Grouping(Expr expression) {
+        this.expression = expression;
     }
-    String outputDir = args[0];
-  }
 }
 ```
 
-注意，这个文件在另一个包中，是`.tool`而不是`.lox`。这个脚本并不是解释器本身的一部分，它是一个工具，我们这种编写解释器的人，通过运行该脚本来生成语法树类。完成后，我们把“Expr.java”与实现中的其它文件进行相同的处理。我们只是自动化了文件的生成方式。
+这个类只有一个字段，就是括号中间的那个表达式。
 
-为了生成类，还需要对每种类型及其字段进行一些描述。
+## $3.3$ 处理抽象语法树结构
 
-*<u>tool/GenerateAst.java，在 main()方法中添加</u>*
+我们上面已经写过一个小程序来展示如何对抽象语法树进行求值，而这其实就是解释器处理抽象语法树的方式。$Atguigu$中的每种表达式在运行时的行为都不一样。这意味着解释器需要选择不同的代码块来处理每种表达式类型。
 
-```java
-    String outputDir = args[0];
-    // 新增部分开发
-    defineAst(outputDir, "Expr", Arrays.asList(
-      "Binary   : Expr left, Token operator, Expr right",
-      "Grouping : Expr expression",
-      "Literal  : Object value",
-      "Unary    : Token operator, Expr right"
-    ));
-    // 新增部分结束
-  }
-```
-
-为简便起见，我将表达式类型的描述放入了字符串中。 每一项都包括类的名称，后跟`：`和以逗号分隔的字段列表。 每个字段都有一个类型和一个名称。
-
-`defineAst()`需要做的第一件事是输出基类Expr。
-
-*<u>tool/GenerateAst.java，在 main()方法后添加：</u>*
+我们可以编写一长串类型测试来完成对抽象语法树的处理。
 
 ```java
-  private static void defineAst(
-      String outputDir, String baseName, List<String> types)
-      throws IOException {
-    String path = outputDir + "/" + baseName + ".java";
-    PrintWriter writer = new PrintWriter(path, "UTF-8");
-
-    writer.println("package com.craftinginterpreters.lox;");
-    writer.println();
-    writer.println("import java.util.List;");
-    writer.println();
-    writer.println("abstract class " + baseName + " {");
-
-    writer.println("}");
-    writer.close();
-  }
-```
-
-我们调用这个函数时，`baseName`是“Expr”，它既是类的名称，也是它输出的文件的名称。我们将它作为参数传递，而不是对名称进行硬编码，因为稍后我们将为语句添加一个单独的类族。
-
-在基类内部，我们定义每个子类。
-
-*<u>tool/GenerateAst.java，在 defineAst()类中添加[^13]：</u>*
-
-```java
-    writer.println("abstract class " + baseName + " {");
-    // 新增部分开始
-    // The AST classes.
-    for (String type : types) {
-      String className = type.split(":")[0].trim();
-      String fields = type.split(":")[1].trim(); 
-      defineType(writer, baseName, className, fields);
-    }
-    // 新增部分结束
-    writer.println("}");
-```
-
-这段代码依次调用：
-
-*<u>tool/GenerateAst.java，在 defineAst()后面添加：</u>*
-
-```java
-  private static void defineType(
-      PrintWriter writer, String baseName,
-      String className, String fieldList) {
-    writer.println("  static class " + className + " extends " +
-        baseName + " {");
-
-    // Constructor.
-    writer.println("    " + className + "(" + fieldList + ") {");
-
-    // Store parameters in fields.
-    String[] fields = fieldList.split(", ");
-    for (String field : fields) {
-      String name = field.split(" ")[1];
-      writer.println("      this." + name + " = " + name + ";");
-    }
-
-    writer.println("    }");
-
-    // Fields.
-    writer.println();
-    for (String field : fields) {
-      writer.println("    final " + field + ";");
-    }
-
-    writer.println("  }");
-  }
-```
-
-好了。所有的Java模板都完成了。它在类体中声明了每个字段。它为类定义了一个构造函数，为每个字段提供参数，并在类体中对其初始化。
-
-现在编译并运行这个Java程序，它会生成一个新的`.Java`文件，其中包含几十行代码。那份文件还会变得更长。
-
-## 4.3 处理树结构
-
-先想象一下吧。尽管我们还没有到那一步，但请考虑一下解释器将如何处理语法树。$Atguigu$中的每种表达式在运行时的行为都不一样。这意味着解释器需要选择不同的代码块来处理每种表达式类型。对于词法标记，我们可以简单地根据`TokenType`进行转换。但是我们并没有为语法树设置一个 "type "枚举，只是为每个语法树单独设置一个$Java$类。
-
-我们可以编写一长串类型测试：
-
-```java
-if (expr instanceof Expr.Binary) {
+if (expr instanceof Binary) {
   // ...
-} else if (expr instanceof Expr.Grouping) {
+} else if (expr instanceof Grouping) {
   // ...
 } else // ...
 ```
 
-但所有这些顺序类型测试都很慢。类型名称按字母顺序排列在后面的表达式，执行起来会花费更多的时间，因为在找到正确的类型之前，它们会遇到更多的`if`情况。这不是我认为的优雅解决方案。
+## $3.4$ 打印抽象语法树
 
-我们有一个类族，我们需要将一组行为与每个类关联起来。在Java这样的面向对象语言中，最自然的解决方案是将这些行为放入类本身的方法中。我们可以在Expr上添加一个抽象的`interpret()`方法，然后每个子类都要实现这个方法来解释自己。
+当我们调试语法分析器和解释器时，查看语法分析后的抽象语法树并确保其与期望的结构一致通常是很有用的。我们可以在调试器中进行检查，但那可能有点难。
 
-这对于小型项目来说还行，但它的扩展性很差。就像我之前提到的，这些树类跨越了几个领域。至少，解析器和解释器都会对它们进行干扰。稍后您将看到，我们需要对它们进行名称解析。如果我们的语言是静态类型的，我们还需要做类型检查。
+相反，我们需要一些代码，在给定抽象语法树的情况下，生成一个明确的字符串表示。
 
-### 4.3.1 表达式问题
+我们希望字符串非常明确地显示树的嵌套结构。如果我们要调试的是操作符的优先级是否处理正确，那么返回`1 + 2 * 3`的打印器并没有什么用，我们想知道`+`或`*`是否在语法树的顶部。
 
-这个问题比起初看起来更基础。我们有一些类型，和一些高级操作，比如“解释”。对于每一对类型和操作，我们都需要一个特定的实现。画一个表：
-
-![A table where rows are labeled with expression classes, and columns are function names.](5.表示代码/table.png)
-
-行是类型，列是操作。每个单元格表示在该类型上实现该操作的唯一代码段。
-
-像Java这样的面向对象的语言，假定一行中的所有代码都自然地挂在一起。它认为你对一个类型所做的所有事情都可能是相互关联的，而使用这类语言可以很容易将它们一起定义为同一个类里面的方法。
-
-![The table split into rows for each class.](5.表示代码/rows.png)
-
-这种情况下，向表中加入新行来扩展列表是很容易的，简单地定义一个新类即可，不需要修改现有的代码。但是，想象一下，如果你要添加一个新操作（新的一行）。在Java中，这意味着要拆开已有的那些类并向其中添加方法。
-
-ML家族中的函数式范型反过来了。在这些语言中，没有带方法的类，类型和函数是完全独立的。要为许多不同类型实现一个操作，只需定义一个函数。在该函数体中，您可以使用*模式匹配*（某种基于类型的switch操作）在同一个函数中实现每个类型对应的操作。
-
-这使得添加新操作非常简单—只需定义另一个与所有类型模式匹配的的函数即可。
-
-![The table split into columns for each function.](5.表示代码/columns.png)
-
-但是，反过来说，添加新类型是困难的。您必须回头向已有函数中的所有模式匹配添加一个新的case。
-
-每种风格都有一定的 "纹路"。这就是范式名称的字面意思——面向对象的语言希望你按照类型的行来*组织*你的代码。而函数式语言则鼓励你把每一列的代码都归纳为一个*函数*。
-
-一群聪明的语言迷注意到，这两种风格都不容易向表格中添加行和列。他们称这个困难为“表达式问题”[^17]。就像我们现在一样，他们是在试图找出在编译器中建模表达式语法树节点的最佳方法时，第一次遇到了该问题。
-
-人们已经抛出了各种各样的语言特性、设计模式和编程技巧，试图解决这个问题，但还没有一种完美的语言能够解决它。与此同时，我们所能做的就是尽量选择一种与我们正在编写的程序的自然架构相匹配的语言。
-
-面向对象在我们的解释器的许多部分都可以正常工作，但是这些树类与Java的本质背道而驰。 幸运的是，我们可以采用一种设计模式来解决这个问题。
-
-### 4.3.2 访问者模式
-
-**访问者模式**是所有*设计模式*中最容易被误解的模式，当您回顾过去几十年的软件架构泛滥状况时，会发现确实如此。
-
-问题出在术语上。这个模式不是关于“visiting（访问）”，它的 “accept”方法也没有让人产生任何有用的想象。许多人认为这种模式与遍历树有关，但事实并非如此。我们确实要在一组树结构的类上使用它，但这只是一个巧合。如您所见，该模式在单个对象上也可以正常使用。
-
-访问者模式实际上近似于OOP语言中的函数式。它让我们可以很容易地向表中添加新的列。我们可以在一个地方定义针对一组类型的新操作的所有行为，而不必触及类型本身。这与我们解决计算机科学中几乎所有问题的方式相同：添加中间层。
-
-在将其应用到自动生成的Expr类之前，让我们先看一个更简单的例子。比方说我们有两种点心:Beignet(卷饼)和Cruller(油酥卷)。
-
-```java
- abstract class Pastry {
-  }
-
-  class Beignet extends Pastry {
-  }
-
-  class Cruller extends Pastry {
-  }
-```
-
-我们希望能够定义新的糕点操作（烹饪，食用，装饰等），而不必每次都向每个类添加新方法。我们是这样做的。首先，我们定义一个单独的接口[^18]。
-
-```java
-  interface PastryVisitor {
-    void visitBeignet(Beignet beignet); 
-    void visitCruller(Cruller cruller);
-  }
-```
-
-可以对糕点执行的每个操作都是实现该接口的新类。 它对每种类型的糕点都有具体的方法。 这样一来，针对两种类型的操作代码都紧密地嵌套在一个类中。
-
-给定一个糕点，我们如何根据其类型将其路由到访问者的正确方法？多态性拯救了我们！我们在Pastry中添加这个方法：
-
-```java
-  abstract class Pastry {
-    abstract void accept(PastryVisitor visitor);
-  }
-```
-
-每个子类都需要实现该方法：
-
-```java
-  class Beignet extends Pastry {
-    @Override
-    void accept(PastryVisitor visitor) {
-      visitor.visitBeignet(this);
-    }
-  }
-```
-
-以及：
-
-```java
-  class Cruller extends Pastry {
-    @Override
-    void accept(PastryVisitor visitor) {
-      visitor.visitCruller(this);
-    }
-  }
-```
-
-要对糕点执行一个操作，我们就调用它的`accept()`方法，并将我们要执行的操作vistor作为参数传入该方法。pastry类——特定子类对`accept()`的重写实现——会反过来，在visitor上调用合适的visit方法，并将*自身*作为参数传入。
-
-这就是这个技巧的核心所在。它让我们可以在*pastry*类上使用多态派遣，在*visitor*类上选择合适的方法。对应在表格中，每个pastry类都是一行，但如果你看一个visitor的所有方法，它们就会形成一*列*。
-
-![Now all of the cells for one operation are part of the same class, the visitor.](5.表示代码/visitor.png)
-
-我们为每个类添加了一个`accept（）`方法，我们可以根据需要将其用于任意数量的访问者，而无需再次修改*pastry*类。 这是一个聪明的模式。
-
-### 4.3.3 表达式访问者
-
-好的，让我们将它编入表达式类中。我们还要对这个模式进行一下完善。在糕点的例子中，visit和`accept()`方法没有返回任何东西。在实践中，访问者通常希望定义能够产生值的操作。但`accept()`应该具有什么返回类型呢？我们不能假设每个访问者类都想产生相同的类型，所以我们将使用泛型来让每个实现类自行填充一个返回类型。
-
-首先，我们定义访问者接口。同样，我们把它嵌套在基类中，以便将所有的内容都放在一个文件中。
-
-*<u>tool/GenerateAst.java，在 defineAst()方法中添加：</u>*
-
-```java
-    writer.println("abstract class " + baseName + " {");
-		// 新增部分开始
-		defineVisitor(writer, baseName, types);
-		// 新增部分结束
-    // The AST classes.
-```
-
-这个函数会生成visitor接口。
-
-*<u>tool/GenerateAst.java，在 defineAst()方法后添加：</u>*
-
-```java
-  private static void defineVisitor(
-      PrintWriter writer, String baseName, List<String> types) {
-    writer.println("  interface Visitor<R> {");
-
-    for (String type : types) {
-      String typeName = type.split(":")[0].trim();
-      writer.println("    R visit" + typeName + baseName + "(" +
-          typeName + " " + baseName.toLowerCase() + ");");
-    }
-
-    writer.println("  }");
-  }
-```
-
-在这里，我们遍历所有的子类，并为每个子类声明一个visit方法。当我们以后定义新的表达式类型时，会自动包含这些内容。
-
-在基类中，定义抽象 `accept()` 方法。
-
-*<u>tool/GenerateAst.java，在 defineAst()方法中添加：</u>*
-
-```java
-    	defineType(writer, baseName, className, fields);
-    }
-    // 新增部分开始
-    // The base accept() method.
-    writer.println();
-    writer.println("  abstract <R> R accept(Visitor<R> visitor);");
-    // 新增部分结束
-    writer.println("}");
-```
-
-最后，每个子类都实现该方法，并调用其类型对应的visit方法。
-
-*<u>tool/GenerateAst.java，在 defineType()方法中添加：</u>*
-
-```java
-    writer.println("    }");
-    // 新增部分开始
-    // Visitor pattern.
-    writer.println();
-    writer.println("    @Override");
-    writer.println("    <R> R accept(Visitor<R> visitor) {");
-    writer.println("      return visitor.visit" +
-        className + baseName + "(this);");
-    writer.println("    }");
-    // 新增部分结束
-    // Fields.
-```
-
-这下好了。现在我们可以在表达式上定义操作，而且无需对类或生成器脚本进行修改。编译并运行这个生成器脚本，输出一个更新后的 "Expr.java "文件。该文件中包含一个生成的Visitor接口和一组使用该接口支持Visitor模式的表达式节点类。
-
-在结束这一章的闲聊之前，我们先实现一下这个Visitor接口，看看这个模式的运行情况。
-
-## 4.4 一个（不是很）漂亮的打印器
-
-当我们调试解析器和解释器时，查看解析后的语法树并确保其与期望的结构一致通常是很有用的。我们可以在调试器中进行检查，但那可能有点难。
-
-相反，我们需要一些代码，在给定语法树的情况下，生成一个明确的字符串表示。将语法树转换为字符串是解析器的逆向操作，当我们的目标是产生一个在源语言中语法有效的文本字符串时，通常被称为 "漂亮打印"。
-
-这不是我们的目标。我们希望字符串非常明确地显示树的嵌套结构。如果我们要调试的是操作符的优先级是否处理正确，那么返回`1 + 2 * 3`的打印器并没有什么用，我们想知道`+`或`*`是否在语法树的顶部。
-
-因此，我们生成的字符串表示形式不是Lox语法。相反，它看起来很像Lisp。每个表达式都被显式地括起来，并且它的所有子表达式和词法标记都包含在其中。
+因此，我们生成的字符串表示形式不是$Atguigu$语言的语法。因为我们会把每个表达式都用括号扩起来，并且它的所有子表达式和词法标记都包含在其中。
 
 给定一个语法树，如：
 
-![An example syntax tree.](5.表示代码/expression.png)
+```mermaid
+graph TB
+	A(("*")) --> B(("-"))
+	A --> C(("()"))
+	B --> D(("123"))
+	C --> E(("45.67"))
+```
+
+
 
 输出结果为：
 
@@ -1755,93 +1503,87 @@ ML家族中的函数式范型反过来了。在这些语言中，没有带方法
 (* (- 123) (group 45.67))
 ```
 
-不是很“漂亮”，但是它确实明确地展示了嵌套和分组。为了实现这一点，我们定义了一个新类。
+打印结果明确地展示了嵌套和分组。对优先级展示的也很好。运算符越靠前，优先级越低。为了实现这一点，我们定义了一个新类。
 
-*<u>lox/AstPrinter.java，创建新文件：</u>*
-
-```java
-package com.craftinginterpreters.lox;
-
-class AstPrinter implements Expr.Visitor<String> {
-  String print(Expr expr) {
-    return expr.accept(this);
-  }
-}
-```
-
-如你所见，它实现了visitor接口。这意味着我们需要为我们目前拥有的每一种表达式类型提供visit方法。
-
-*<u>lox/AstPrinter.java，在 print()方法后添加：</u>*
+> 创建新文件`AstPrinter.java`
 
 ```java
-  return expr.accept(this);
-  }
-	// 新增部分开始
-	@Override
-  public String visitBinaryExpr(Expr.Binary expr) {
-    return parenthesize(expr.operator.lexeme,
-                        expr.left, expr.right);
-  }
+package com.atguigu;
 
-  @Override
-  public String visitGroupingExpr(Expr.Grouping expr) {
-    return parenthesize("group", expr.expression);
-  }
-
-  @Override
-  public String visitLiteralExpr(Expr.Literal expr) {
-    if (expr.value == null) return "nil";
-    return expr.value.toString();
-  }
-
-  @Override
-  public String visitUnaryExpr(Expr.Unary expr) {
-    return parenthesize(expr.operator.lexeme, expr.right);
-  }
-	// 新增部分结束
-}
-```
-
-字面量表达式很简单——它们将值转换为一个字符串，并通过一个小检查用Java中的`null`代替Lox中的`nil`。其他表达式有子表达式，所以它们要使用`parenthesize()`这个辅助方法：
-
-*<u>lox/AstPrinter.java，在 visitUnaryExpr()方法后添加：</u>*
-
-```java
-  private String parenthesize(String name, Expr... exprs) {
-    StringBuilder builder = new StringBuilder();
-
-    builder.append("(").append(name);
-    for (Expr expr : exprs) {
-      builder.append(" ");
-      builder.append(expr.accept(this));
+// 注意在这个程序中，printExpr和parenthesize是互相递归调用的。
+public class AstPrinter {
+    public String printExpr(Expr expr) {
+        if (expr instanceof Binary) {
+            // 二元表达式的字符串输出格式
+            // 用括号括起来
+            // 先打印运算符，再打印运算符左边和右边的表达式
+            // 1 + 2 --> (+ 1 2)
+            // 1 + 2 * 3 --> (+ 1 (* 2 3))
+            return parenthesize(
+                    ((Binary) expr).operator.lexeme,
+                    ((Binary) expr).left,
+                    ((Binary) expr).right
+            );
+        } else if (expr instanceof Grouping) {
+            return parenthesize(
+                    "group",
+                    ((Grouping) expr).expression
+            );
+        } else if (expr instanceof Unary) {
+            return parenthesize(
+                    ((Unary) expr).operator.lexeme,
+                    ((Unary) expr).right
+            );
+        } else if (expr instanceof Literal) {
+            if (((Literal) expr).value == null) return "nil";
+            return ((Literal) expr).value.toString();
+        }
+        return null;
     }
-    builder.append(")");
 
-    return builder.toString();
-  }
+    // 将表达式用括号括起来打印
+    private String parenthesize(String name, Expr... exprs) {
+        StringBuilder builder = new StringBuilder();
+
+        builder.append("(").append(name);
+        for (Expr expr : exprs) {
+            builder.append(" ");
+            // 注意！这里有递归调用，因为我们要括起来的是
+            // 表达式的字符串
+            builder.append(printExpr(expr));
+        }
+        builder.append(")");
+
+        return builder.toString();
+    }
+
+    public static void main(String[] args) {
+        Expr expression = new Binary(
+                new Unary(
+                        new Token(TokenType.MINUS, "-", null, 1),
+                        new Literal(123)),
+                new Token(TokenType.STAR, "*", null, 1),
+                new Grouping(
+                        new Literal(45.67)));
+
+        System.out.println(new AstPrinter().printExpr(expression));
+    }
+}
 ```
 
-它接收一个名称和一组子表达式作为参数，将它们全部包装在圆括号中，并生成一个如下的字符串：
+我们还没有语法分析器，所以很难看到它的实际应用。现在，我们先使用一个`main()`方法来手动实例化一个树并打印它。这个表达式是：`-123 * (45.67)`。
 
-```
-(+ 1 2)
-```
-
-请注意，它在每个子表达式上调用`accept()`并将自身传递进去。 这是递归步骤，可让我们打印整棵树。
-
-我们还没有解析器，所以很难看到它的实际应用。现在，我们先使用一个`main()`方法来手动实例化一个树并打印它。
-
-*<u>lox/AstPrinter.java，在 parenthesize()方法后添加：</u>*
+> 在`AstPrinter.java`文件中，在`parenthesize()`方法后添加
 
 ```java
   public static void main(String[] args) {
-    Expr expression = new Expr.Binary(
-        new Expr.Unary(
+    Expr expression = new Binary(
+        new Unary(
             new Token(TokenType.MINUS, "-", null, 1),
-            new Expr.Literal(123)),
+            new Literal(123)),
         new Token(TokenType.STAR, "*", null, 1),
-        new Expr.Grouping(
-            new Expr.Literal(45.67)));
+        new Grouping(
+            new Literal(45.67)));
 
     System.out.println(new AstPrinter().print(expression));
   }
@@ -1853,45 +1595,66 @@ class AstPrinter implements Expr.Visitor<String> {
 (* (- 123) (group 45.67))
 ```
 
-您可以继续删除这个方法，我们后面不再需要它了。另外，当我们添加新的语法树类型时，我不会在AstPrinter中展示它们对应的visit方法。如果你想这样做(并且希望Java编译器不会报错)，那么你可以自行添加这些方法。在下一章，当我们开始将Lox代码解析为语法树时，它将会派上用场。或者，如果你不想维护AstPrinter，可以随意删除它。我们不再需要它了。
+# $4$ 对表达式进行语法分析
 
-# 5. 对表达式进行语法分析
+由于我们已经定义好了表达式的抽象语法树节点，也熟悉了上下无关文法，所以本章的目标就是将标记序列转换成一颗抽象语法树。
 
-本章是本书的第一个重要里程碑。我们中的许多人都曾将正则表达式和字符串操作的糅合在一起，以便从一堆文本中提取一些信息。这些代码可能充满了错误，而且很难维护。编写一个真正的解析器—具有良好的错误处理、一致的内部结构和能够健壮地分析复杂语法的能力—被认为是一种罕见的、令人印象深刻的技能。在这一章中，你将获得这种技能。
+```mermaid
+flowchart LR
+	subgraph AA["字符串"]
+		A["(1+2)*3"]
+	end
+	subgraph BB["标记序列"]
+		B["LEFT_PAREN"] --> C["1"]
+		C --> D["+"] --> E["2"] --> F["RIGHT_PAREN"]
+		F --> G["*"] --> H["3"]
+	end
+	subgraph CC["抽象语法树"]
+		I["*"] --> J["()"]
+		I --> K["3"]
+		J --> L["+"] --> M["1"]
+		L --> N["2"]
+	end
+	AA --> BB --> CC
+```
 
-这比想象中要简单，部分是因为我们在上一章中提前完成了很多困难的工作。你已经对形式化语法了如指掌，也熟悉了语法树，而且我们有一些Java类来表示它们。唯一剩下的部分是解析—将一个标记序列转换成这些语法树中的一个。
+## $4.1$ 文法的歧义
 
-## 5.1 歧义与解析游戏
+我们完全有可能创建一个 **模棱两可** 的语法。
 
-在上一章中，我说过你可以像“玩”游戏一样使用上下文无关的语法来*生成*字符串。解析器则以相反的方式玩游戏。给定一个字符串(一系列语法标记)，我们将这些标记映射到语法中的终止符，以确定哪些规则可能生成该字符串。
-
-"可能产生 "这部分很有意思。我们完全有可能创建一个*模棱两可*的语法，在这个语法中，不同的生成式可能会得到同一个字符串。当你使用该语法来*生成*字符串时，这一点不太重要。一旦你有了字符串，谁还会在乎你是怎么得到它的呢？
-
-但是在解析时，歧义意味着解析器可能会误解用户的代码。当我们进行解析时，我们不仅要确定字符串是不是有效的Lox代码，还要记录哪些规则与代码的哪些部分相匹配，以便我们知道每个标记属于语言的哪一部分。下面是我们在上一章整理的Lox表达式语法：
+在语法分析时，歧义意味着语法分析器可能会误解用户的代码。当我们进行语法分析时，我们不仅要确定字符串是不是有效的$Atguigu$代码，还要记录哪些规则与代码的哪些部分相匹配，以便我们知道每个标记属于语言的哪一部分。下面是我们在上一章整理的$Atguigu$表达式语法：
 
 ```js
-expression     → literal
+expression     = literal
                | unary
                | binary
                | grouping ;
 
-literal        → NUMBER | STRING | "true" | "false" | "nil" ;
-grouping       → "(" expression ")" ;
-unary          → ( "-" | "!" ) expression ;
-binary         → expression operator expression ;
-operator       → "==" | "!=" | "<" | "<=" | ">" | ">="
+literal        = NUMBER | STRING | "true" | "false" | "nil" ;
+grouping       = "(" expression ")" ;
+unary          = ( "-" | "!" ) expression ;
+binary         = expression operator expression ;
+operator       = "==" | "!=" | "<" | "<=" | ">" | ">="
                | "+"  | "-"  | "*" | "/" ;
 ```
 
-下面是一个满足语法的有效字符串：
+下面是一个满足语法的有效字符串`6/3-1`：
 
-![6 / 3 - 1](6.解析表达式/tokens.png)
+```mermaid
+flowchart LR
+	A["6"]
+	B["/"]
+	C["3"]
+	D["-"]
+	E["1"]
+	A---B---C---D---E
+```
 
 但是，有两种方式可以生成该字符串。其一是：
 
 1. 从`expression`开始，选择`binary`。
 2. 对于左边的`expression`，选择`NUMBER`，并且使用`6`。
-3. 对于操作符，选择`/`。
+3. 对于运算符，选择`/`。
 4. 对于右边的`expression`，再次选择`binary`。
 5. 在内层的`binary` 表达式中，选择`3-1`。
 
@@ -1900,18 +1663,35 @@ operator       → "==" | "!=" | "<" | "<=" | ">" | ">="
 1. 从`expression`开始，选择`binary`。
 2. 对于左边的`expression`，再次选择`binary`。
 3. 在内层的`binary` 表达式中，选择`6/3`。
-4. 返回外层的`binary` ，对于操作符，选择`-`。
+4. 返回外层的`binary` ，对于运算符，选择`-`。
 5. 对于右边的`expression`，选择`NUMBER`，并且使用`1`。
 
-它们产生相同的字符串，但对应的是不同的*语法树*：
+它们产生相同的字符串，但对应的是不同的 **抽象语法树** ：
 
-![Two valid syntax trees: (6 / 3) - 1 and 6 / (3 - 1)](6.解析表达式/syntax-trees.png)
+```mermaid
+flowchart LR
+	subgraph BB["AST_2"]
+		F["-"] --> G["/"]
+		F --> H["1"]
+		G --> I["6"]
+		G --> J["3"]
+	end
+	subgraph AA["AST_1"]
+		A["/"] --> B["6"]
+		A --> C["-"]
+		C --> D["3"]
+		C --> E["1"]
+	end
+	AA <--"两颗语法树不同"--> BB
+```
+
+显然，两颗语法树的计算结果是不一样的。
 
 换句话说，这个语法可以将该表达式看作是 `(6 / 3) - 1`或`6 / (3 - 1)`。`binary` 规则运行操作数以任意方式嵌套，这反过来又会影响解析数的计算结果。自从黑板被发明以来，数学家们解决这种模糊性的方法就是定义优先级和结合性规则。
 
-- **优先级**决定了在一个包含不同运算符的混合表达式中，哪个运算符先被执行。优先级规则告诉我们，在上面的例子中，我们在`-`之前先计算`/`。优先级较高的运算符在优先级较低的运算符之前计算。同样，优先级较高的运算符被称为 "更严格的绑定"。
+- **优先级**决定了在一个包含不同运算符的混合表达式中，哪个运算符先被执行。优先级规则告诉我们，在上面的例子中，我们在`-`之前先计算`/`。优先级较高的运算符在优先级较低的运算符之前计算。同样，优先级较高的运算符被称为 **更严格的绑定** 。
 
-- **结合性**决定在一系列相同操作符中先计算哪个操作符。如果一个操作符是**左结合**的(可以认为是“从左到右”)时，左边的操作符在右边的操作符之前计算。因为`-`是左结合的，下面的表达式：
+- **结合性**决定在一系列相同运算符中先计算哪个运算符。如果一个操作符是**左结合**的（可以认为是“从左到右”）时，左边的操作符在右边的操作符之前计算。因为`-`是左结合的，下面的表达式：
 
   ```java
   5 - 3 - 1
@@ -1935,57 +1715,57 @@ operator       → "==" | "!=" | "<" | "<=" | ">" | ">="
   a = (b = c)
   ```
 
-如果没有明确定义的优先级和结合性，使用多个运算符的表达式可能就会变得有歧义——它可以被解析为不同的语法树，而这些语法树又可能会计算出不同的结果。我们在Lox中会解决这个问题，使用与C语言相同的优先级规则，从低到高分别是：
+如果没有明确定义的优先级和结合性，使用多个运算符的表达式可能就会变得有歧义—它可以被解析为不同的抽象语法树，而这些抽象语法树又可能会计算出不同的结果。我们在$Atguigu$中会解决这个问题，使用与$JS$语言相同的优先级规则，从低到高分别是：
 
-| Name              | Operators         | Associates    |
-| ----------------- | ----------------- | ------------- |
-| Equality  等于    | `==` `!=`         | Left  左结合  |
-| Comparison  比较  | `>` `>=` `<` `<=` | Left  左结合  |
-| Term  加减运算    | `-` `+`           | Left  左结合  |
-| Factor   乘除运算 | `/` `*`           | Left  左结合  |
-| Unary  一元运算符 | `!` `-`           | Right  右结合 |
+| 运算符名称   | 运算符            | 结合性 |
+| ------------ | ----------------- | ------ |
+| 判断是否相等 | `==` `!=`         | 左结合 |
+| 比较运算符   | `>` `>=` `<` `<=` | 左结合 |
+| 加减运算符   | `-` `+`           | 左结合 |
+| 乘除运算符   | `/` `*`           | 左结合 |
+| 一元运算符   | `!` `-`           | 右结合 |
 
-现在，该语法将所有表达式类型都添加到一个 `expression`规则中。这条规则同样作用于操作数中的非终止符，这使得语法中可以接受任何类型的表达式作为子表达式，而不管优先级规则是否允许。
+现在，该语法将所有表达式类型都添加到一个 `expression`规则中。这条规则同样作用于操作数中的非终结符，这使得语法中可以接受任何类型的表达式作为子表达式，而不管优先级规则是否允许。
 
 我们通过对语法进行分层来解决这个问题。我们为每个优先级定义一个单独的规则。
 
 ```js
-expression     → ...
-equality       → ...
-comparison     → ...
-term           → ...
-factor         → ...
-unary          → ...
-primary        → ...
+expression     = ...
+equality       = ...
+comparison     = ...
+term           = ...
+factor         = ...
+unary          = ...
+primary        = ...
 ```
 
-此处的每个规则仅匹配其当前优先级或更高优先级的表达式。 例如，`unary` 匹配一元表达式（如 `!negated`）或主表达式（如`1234`）。`term`可以匹配`1 + 2`，但也可以匹配`3 * 4 /5`。最后的`primary` 规则涵盖优先级最高的形式—字面量和括号表达式。
+此处的每个规则仅匹配其当前优先级或更高优先级的表达式。 例如，`unary` 匹配一元表达式（如 `!negated`）或`primary`表达式（如`1234`）。`term`可以匹配`1 + 2`，但也可以匹配`3 * 4 /5`。最后的`primary` 规则涵盖优先级最高的形式—字面量和括号表达式。
 
 我们只需要填写每条规则的生成式。我们先从简单的开始。顶级的`expression` 规则可以匹配任何优先级的表达式。由于`equality`的优先级最低，只要我们匹配了它，就涵盖了一切。
 
 ```
-expression     → equality
+expression     = equality
 ```
 
 在优先级表的另一端，`primary`表达式包括所有的字面量和分组表达式。
 
 ```js
-primary        → NUMBER | STRING | "true" | "false" | "nil"
+primary        = NUMBER | STRING | "true" | "false" | "nil"
                | "(" expression ")" ;
 ```
 
-一元表达式以一元操作符开头，后跟操作数。因为一元操作符可以嵌套——`!!true`虽奇怪也是可用的表达式——这个操作数本身可以是一个一元表达式。递归规则可以很好地解决这个问题。
+一元表达式以一元运算符开头，后跟操作数。因为一元运算符可以嵌套—`!!true`虽奇怪也是可用的表达式—这个操作数本身可以是一个一元表达式。递归规则可以很好地解决这个问题。
 
 ```js
-unary          → ( "!" | "-" ) unary ;
+unary          = ( "!" | "-" ) unary ;
 ```
 
 但是这条规则有一个问题，它永远不会终止。
 
-请记住，每个规则都需要匹配该优先级或更高优先级的表达式，因此我们还需要使其与主表达式匹配。
+请记住，每个规则都需要匹配该优先级或更高优先级的表达式，因此我们还需要使其与`primary`表达式匹配。
 
 ```js
-unary          → ( "!" | "-" ) unary
+unary          = ( "!" | "-" ) unary
                | primary ;
 ```
 
@@ -1994,59 +1774,57 @@ unary          → ( "!" | "-" ) unary
 剩下的规则就是二元运算符。我们先从乘法和除法的规则开始。下面是第一次尝试：
 
 ```js
-factor         → factor ( "/" | "*" ) unary
+factor         = factor ( "/" | "*" ) unary
                | unary ;
 ```
 
-该规则递归匹配左操作数，这样一来，就可以匹配一系列乘法和除法表达式，例如 `1 * 2 / 3`。将递归生成式放在左侧并将`unary` 放在右侧，可以使该规则具有左关联性和明确性[^6]。
+该规则递归匹配左操作数，这样一来，就可以匹配一系列乘法和除法表达式，例如 `1 * 2 / 3`。将递归生成式放在左侧并将`unary` 放在右侧，可以使该规则具有左结合性和明确性。
 
-所有这些都是正确的，但规则主体中的第一个符号与规则头部相同意味着这个生成式是**左递归**的。一些解析技术，包括我们将要使用的解析技术，在处理左递归时会遇到问题。(其他地方的递归，比如在`unary`中，以及在`primary`分组中的间接递归都不是问题。)
+所有这些都是正确的，但规则主体中的第一个符号与规则头部相同意味着这个生成式是**左递归**的。一些语法分析技术，包括我们将要使用的语法分析技术，在处理左递归时会遇到问题。（其他地方的递归，比如在`unary`中，以及在`primary`分组中的间接递归都不是问题。）
 
-你可以定义很多符合同一种语言的语法。如何对某一特定语言进行建模，一部分是品味问题，一部分是实用主义问题。这个规则是正确的，但对于我们后续的解析来说它并不是最优的。我们将使用不同的规则来代替左递归规则。
+我们可以定义很多符合同一种语言的语法。如何对某一特定语言进行建模，一部分是品味问题，一部分是实用主义问题。这个规则是正确的，但对于我们后续的语法分析来说它并不是最优的。我们将使用不同的规则来代替左递归规则。
 
 ```js
-factor         → unary ( ( "/" | "*" ) unary )* ;
+factor         = unary ( ( "/" | "*" ) unary )* ;
 ```
 
-我们将因子表达式定义为乘法和除法的扁平*序列*。这与前面的规则语法相同，但更好地反映了我们将编写的解析Lox的代码。我们对其它二进制运算符的优先级使用相同的结构，从而得到下面这个完整的表达式语法：
+我们将`factor`表达式定义为乘法和除法的扁平 **序列** 。这与前面的规则语法相同，但更好地反映了我们将编写的解析$Atguigu$语言的代码。我们对其它二元运算符的优先级使用相同的结构，从而得到下面这个完整的表达式语法：
 
 ```js
-expression     → equality ;
-equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-term           → factor ( ( "-" | "+" ) factor )* ;
-factor         → unary ( ( "/" | "*" ) unary )* ;
-unary          → ( "!" | "-" ) unary
+expression     = equality ;
+equality       = comparison ( ( "!=" | "==" ) comparison )* ;
+comparison     = term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+term           = factor ( ( "-" | "+" ) factor )* ;
+factor         = unary ( ( "/" | "*" ) unary )* ;
+unary          = ( "!" | "-" ) unary
                | primary ;
-primary        → NUMBER | STRING | "true" | "false" | "nil"
+primary        = NUMBER | STRING | "true" | "false" | "nil"
                | "(" expression ")" ;
 ```
 
-这个语法比我们以前的那个更复杂，但反过来我们也消除了前一个语法定义中的歧义。这正是我们制作解析器时所需要的。
+这个语法比我们以前的那个更复杂，但反过来我们也消除了前一个语法定义中的歧义。这正是我们制作语法分析器时所需要的。
 
-## 5.2 递归下降分析
+## $4.2$ 递归下降算法
 
-递归下降是构建解析器最简单的方法，不需要使用复杂的解析器生成工具，如Yacc、Bison或ANTLR。你只需要直接手写代码。但是不要被它的简单性所欺骗，递归下降解析器速度快、健壮，并且可以支持复杂的错误处理。事实上，GCC、V8 (Chrome中的JavaScript VM)、Roslyn(用c#编写的c#编译器)和许多其他重量级产品语言实现都使用了递归下降技术。它很好用。
-
-递归下降被认为是一种**自顶向下解析器**，因为它从最顶部或最外层的语法规则(这里是`expression`)开始，一直向下进入嵌套子表达式，最后到达语法树的叶子。这与LR等自下而上的解析器形成鲜明对比，后者从初级表达式(primary)开始，将其组成越来越大的语法块。
+递归下降被认为是一种**自顶向下解析器**，因为它从最顶部或最外层的语法规则(这里是`expression`)开始，一直向下进入嵌套子表达式，最后到达语法树的叶子。
 
 递归下降解析器是一种将语法规则直接翻译成命令式代码的文本翻译器。每个规则都会变成一个函数，规则主体翻译成代码大致是这样的：
 
 | Grammar notation | Code representation    |
 | ---------------- | ---------------------- |
-| Terminal         | 匹配并消费一个语法标记 |
-| Nonterminal      | 调用规则对应的函数     |
-| `|`              | if或switch语句         |
-| `*` or `+`       | while或for循环         |
-| `?`              | if语句                 |
+| 终结符           | 匹配并消费一个词法标记 |
+| 非终结符         | 调用规则对应的函数     |
+| `|`              | `if`或`switch`语句     |
+| `*` 或者 `+`     | `while`或`for`循环     |
+| `?`              | `if`语句               |
 
 下降被“递归”修饰是因为，如果一个规则引用自身（直接或间接）就会变为递归的函数调用。
 
-### 5.2.1 Parser类
+### $4.2.1$ $Parser$类
 
 每个语法规则都成为新类中的一个方法:
 
-*<u>lox/Parser.java，创建新文件：</u>*
+> 创建新文件`Parser.java`
 
 ```java
 package com.atguigu;
@@ -2055,21 +1833,21 @@ import java.util.List;
 
 import static com.atguigu.TokenType.*;
 
-class Parser {
+public class Parser {
   private final List<Token> tokens;
   private int current = 0;
 
-  Parser(List<Token> tokens) {
+  public Parser(List<Token> tokens) {
     this.tokens = tokens;
   }
 }
 ```
 
-与扫描器一样，解析器也是消费一个扁平的输入序列，这是这次我们要读取的是语法标记而不是字符。我们会保存标记列表并使用`current`指向待解析的下一个标记。
+与词法分析器一样，语法分析器也是消费一个扁平的输入序列，只是这次我们要读取的是词法标记而不是字符。我们会保存标记列表并使用`current`指向待解析的下一个标记。
 
 我们现在要直接执行表达式语法，并将每一条规则翻译为Java代码。第一条规则`expression`，简单地展开为`equality`规则，所以很直接：
 
-<u>*lox/Parser.java，在 Parser()方法添加：*</u>
+> 在`Parser.java`文件中，在`Parser()`方法添加
 
 ```java
   private Expr expression() {
@@ -2077,17 +1855,17 @@ class Parser {
   }
 ```
 
-每个解析语法规则的方法都会生成该规则对应的语法树，并将其返回给调用者。当规则主体中包含一个非终止符——对另一条规则的引用时，我们就会调用另一条规则对应的方法[^8]。
+每个解析语法规则的方法都会生成该规则对应的语法树，并将其返回给调用者。当规则主体中包含一个非终止符—对另一条规则的引用时，我们就会调用另一条规则对应的方法。
 
 等式规则有一点复杂：
 
 ```js
-equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+equality       = comparison ( ( "!=" | "==" ) comparison )* ;
 ```
 
-在Java中，这会变成：
+在$Java$中，这会变成：
 
-*<u>lox/Parser.java，在 expression()后面添加：</u>*
+> 在`Parser.java`文件中，在`expression()`后面添加
 
 ```java
   private Expr equality() {
@@ -2103,11 +1881,11 @@ equality       → comparison ( ( "!=" | "==" ) comparison )* ;
   }
 ```
 
-让我们一步步来。规则体中的第一个`comparison`非终止符变成了方法中对 `comparison()`的第一次调用。我们获取结果并将其保存在一个局部变量中。
+让我们一步步来。规则体中的第一个`comparison`非终结符变成了方法中对 `comparison()`的第一次调用。我们获取结果并将其保存在一个局部变量中。
 
-然后，规则中的`( ... )*`循环映射为一个`while`循环。我们需要知道何时退出这个循环。可以看到，在规则体中，我们必须先找到一个` !=` 或` == `标记。因此，如果我们*没有*看到其中任一标记，我们必须结束相等(不相等)运算符的序列。我们使用一个方便的`match()`方法来执行这个检查。
+然后，规则中的`( ... )*`循环映射为一个`while`循环。我们需要知道何时退出这个循环。可以看到，在规则体中，我们必须先找到一个` !=` 或` == `标记。因此，如果我们 **没有** 看到其中任一标记，我们必须结束相等（不相等）运算符的序列。我们使用一个方便的`match()`方法来执行这个检查。
 
-*<u>lox/Parser.java，在 equality()方法后添加：</u>*
+> 在`Parser.java`文件中，在`equality()`方法后添加
 
 ```java
   private boolean match(TokenType... types) {
@@ -2126,7 +1904,7 @@ equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 
 如果当前标记属于给定类型，则`check()`方法返回`true`。与`match()`不同的是，它从不消费标记，只是读取。
 
-*<u>lox/Parser.java，在 match()方法后添加：</u>*
+> 在`Parser.java`文件中，在`match()`方法后添加
 
 ```java
   private boolean check(TokenType type) {
@@ -2135,9 +1913,9 @@ equality       → comparison ( ( "!=" | "==" ) comparison )* ;
   }
 ```
 
-`advance()`方法会消费当前的标记并返回它，类似于扫描器中对应方法处理字符的方式。
+`advance()`方法会消费当前的标记并返回它，类似于词法分析器中对应方法处理字符的方式。
 
-*<u>lox/Parser.java，在 check()方法后添加：</u>*
+> 在`Parser.java`文件中，在`check()`方法后添加
 
 ```java
   private Token advance() {
@@ -2148,7 +1926,7 @@ equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 
 这些方法最后都归结于几个基本操作。
 
-*<u>lox/Parser.java，在 advance()后添加：</u>*
+> 在`Parser.java`文件中，在`advance()`后添加
 
 ```java
   private boolean isAtEnd() {
@@ -2168,21 +1946,21 @@ equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 
 这就是我们需要的大部分解析基本工具。我们说到哪里了？对，如果我们在`equality()`的`while`循环中，也就能知道我们已经找到了一个`!=`或`==`操作符，并且一定是在解析一个等式表达式。
 
-我们获取到匹配的操作符标记，这样就可以知道我们要处理哪一类等式表达式。之后，我们再次调用`comparison()`解析右边的操作数。我们将操作符和它的两个操作数组合成一个新的`Expr.Binary`语法树节点，然后开始循环。对于每一次迭代，我们都将结果表达式存储在同一个`expr`局部变量中。在对等式表达式序列进行压缩时，会创建一个由二元操作符节点组成的左结合嵌套树[^9]。
+我们获取到匹配的操作符标记，这样就可以知道我们要处理哪一类等式表达式。之后，我们再次调用`comparison()`解析右边的操作数。我们将操作符和它的两个操作数组合成一个新的`Binary`语法树节点，然后开始循环。对于每一次迭代，我们都将结果表达式存储在同一个`expr`局部变量中。在对等式表达式序列进行压缩时，会创建一个由二元操作符节点组成的左结合嵌套树。
 
 ![The syntax tree created by parsing 'a == b == c == d == e'](6.解析表达式/sequence.png)
 
-一旦解析器遇到一个不是等式操作符的标记，就会退出循环。最后，它会返回对应的表达式。请注意，如果解析器从未遇到过等式操作符，它就永远不会进入循环。在这种情况下，`equality()`方法有效地调用并返回`comparison()`。这样一来，这个方法就会匹配一个等式运算符或*任何更高优先级的表达式*。
+一旦解析器遇到一个不是等式操作符的标记，就会退出循环。最后，它会返回对应的表达式。请注意，如果解析器从未遇到过等式操作符，它就永远不会进入循环。在这种情况下，`equality()`方法有效地调用并返回`comparison()`。这样一来，这个方法就会匹配一个等式运算符或 **任何更高优先级的表达式** 。
 
 继续看下一个规则。
 
 ```js
-comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+comparison     = term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 ```
 
-翻译成Java：
+翻译成$Java$：
 
-*<u>lox/Parser.java，在 equality()方法后添加：</u>*
+> 在`Parser.java`文件中，在`equality()`方法后添加
 
 ```java
   private Expr comparison() {
@@ -2198,11 +1976,11 @@ comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
   }
 ```
 
-语法规则与`equality`几乎完全相同，相应的代码也是如此。唯一的区别是匹配的操作符的标记类型，而且现在获取操作数时调用的方法是`term()`而不是`comparison()`。其余两个二元操作符规则遵循相同的模式。
+语法规则与`equality`几乎完全相同，相应的代码也是如此。唯一的区别是匹配的操作符的标记类型，而且现在获取操作数时调用的方法是`term()`而不是`comparison()`。其余两个二元运算符规则遵循相同的模式。
 
 按照优先级顺序，先做加减法：
 
-*<u>lox/Parser.java，在 comparison()方法后添加：</u>*
+> 在`Parser.java`文件中，在`comparison()`方法后添加
 
 ```java
   private Expr term() {
@@ -2220,7 +1998,7 @@ comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 
 最后，是乘除法：
 
-*<u>lox/Parser.java，在 term()方法后面添加：</u>*
+> 在`Parser.java`文件中，在`term()`方法后面添加
 
 ```java
   private Expr factor() {
@@ -2236,16 +2014,16 @@ comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
   }
 ```
 
-这就是所有的二进制运算符，已经按照正确的优先级和结合性进行了解析。接下来，按照优先级层级，我们要处理一元运算符了。
+这就是所有的二元运算符，已经按照正确的优先级和结合性进行了语法分析。接下来，按照优先级层级，我们要处理一元运算符了。
 
 ```js
-unary          → ( "!" | "-" ) unary
+unary          = ( "!" | "-" ) unary
                | primary ;
 ```
 
 该规则对应的代码有些不同。
 
-*<u>lox/Parser.java，在 factor()方法后添加：</u>*
+> 在`Parser.java`文件中，在`factor()`方法后添加
 
 ```java
   private Expr unary() {
@@ -2259,18 +2037,18 @@ unary          → ( "!" | "-" ) unary
   }
 ```
 
-同样的，我们先检查当前的标记以确认要如何进行解析[^10]。如果是`!`或`-`，我们一定有一个一元表达式。在这种情况下，我们获取令牌，然后递归调用`unary()`来解析操作数。将所有这些都包装到一元表达式语法树中，我们就完成了。
+同样的，我们先检查当前的标记以确认要如何进行语法分析。如果是`!`或`-`，我们一定有一个一元表达式。在这种情况下，我们获取标记，然后递归调用`unary()`来解析操作数。将所有这些都包装到一元表达式语法树中，我们就完成了。
 
 否则，我们就达到了最高级别的优先级，即基本表达式。
 
 ```js
-primary        → NUMBER | STRING | "true" | "false" | "nil"
+primary        = NUMBER | STRING | "true" | "false" | "nil"
                | "(" expression ")" ;
 ```
 
-该规则中大部分都是终止符，可以直接进行解析。
+该规则中大部分都是终结符，可以直接进行解析。
 
-*<u>lox/Parser.java，在 unary()方法后添加：</u>*
+> 在`Parser.java`文件中，在`unary()`方法后添加
 
 ```java
   private Expr primary() {
@@ -2284,25 +2062,21 @@ primary        → NUMBER | STRING | "true" | "false" | "nil"
 
     if (match(LEFT_PAREN)) {
       Expr expr = expression();
-      consume(RIGHT_PAREN, "Expect ')' after expression.");
+      consume(RIGHT_PAREN, "表达式后面必须有右括号')'存在。");
       return new Expr.Grouping(expr);
     }
   }
 ```
 
-有趣的一点是处理括号的分支。当我们匹配了一个开头`(`并解析了里面的表达式后，我们必须找到一个`)`标记。如果没有找到，那就是一个错误。
+当我们匹配了一个开头`(`并解析了里面的表达式后，我们必须找到一个`)`标记。如果没有找到，那就是一个错误。
 
-## 5.3 语法错误
+## $4.3$ 语法分析器的错误处理
 
-解析器实际上有两项工作：
+语法分析器实际上有两项工作：
 
-1. 给定一个有效的标记序列，生成相应的语法树。
+1. 给定一个 **有效** 的标记序列，生成相应的语法树。
 
-2. 给定一个*无效*的令牌序列，检测错误并告知用户。
-
-不要低估第二项工作的重要性！在现代的IDE和编辑器中，为了语法高亮显示和支持自动补齐等功能，当用户还在编辑代码时，解析器就会不断地重新解析代码。这也意味着解析器*总是*会遇到不完整的、半错误状态的代码。
-
-当用户没有意识到语法错误时，解析器要帮助引导他们回到正确的道路上。它报告错误的方式是你的语言的用户界面中很大的一部分。良好的语法错误处理是很难的。根据定义，代码并不是处于良好定义的状态，所以没有可靠的方法能够知道用户*想要*写什么。解析器无法读懂你的思想。
+2. 给定一个 **无效** 的标记序列，检测错误并告知用户。
 
 当解析器遇到语法错误时，有几个硬性要求。解析器必须能够：
 
@@ -2310,37 +2084,9 @@ primary        → NUMBER | STRING | "true" | "false" | "nil"
 
 - **避免崩溃或挂起。**语法错误是生活中不可避免的事实，面对语法错误，语言工具必须非常健壮。段错误或陷入无限循环是不允许的。虽然源代码可能不是有效的*代码*，但它仍然是*解析器的有效输入*，因为用户使用解析器来了解什么是允许的语法。
 
-如果你想参与到解析器的游戏中来，这些就是桌面的筹码，但你真的想提高赌注，除了这些。一个像样的解析器还应该：
-
-- **要快。**计算机的速度比最初发明解析器技术时快了几千倍。那种需要优化解析器，以便它能在喝咖啡的时候处理完整个源文件的日子已经一去不复返了。但是程序员的期望值也上升得同样快，甚至更快。他们希望他们的编辑器能在每次击键后的几毫秒内回复文件。
-
-- **尽可能多地报告出不同的错误**。在第一个错误后中止是很容易实现的，但是如果每次当用户修复文件中的一个错误时，又出现了另一个新的错误，这对用户来说是很烦人的。他们希望一次看到所有的错误。
-
-- **最小化*级联*错误**。一旦发现一个错误，解析器就不再能知道发生了什么。它会试图让自己回到正轨并继续工作，但如果它感到混乱，它可能会报告大量的幽灵错误，而这些错误并不表明代码中存在其它问题。当第一个错误被修正后，这些幽灵错误就消失了，因为它们只反映了解析器自身的混乱。级联错误很烦人，因为它们会让用户害怕，让用户认为自己的代码比实际情况更糟糕。
-
-最后两点是相互矛盾的。我们希望尽可能多地报告单独的错误，但我们不想报告那些只是由早期错误的副作用导致的错误。
-
-解析器对一个错误做出反应，并继续去寻找后面的错误的方式叫做**错误恢复**。这在60年代是一个热门的研究课题。那时，你需要把一叠穿孔卡片交给秘书，第二天再来看看编译器是否成功。在迭代循环如此缓慢的情况下，你真的会想在一次传递中找到代码中的每个错误。
-
-如今，解析器在您甚至还没有完成输入之前就完成解析了，这不再是一个问题。 简单，快速的错误恢复就可以了。
-
-### $5.3.1$ 恐慌模式错误恢复
-
-在过去设计的所有恢复技术中，最能经受住时间考验的一种叫做**恐慌模式**（有点令人震惊）。一旦解析器检测到一个错误，它就会进入恐慌模式。它知道至少有一个token是没有意义的，因为它目前的状态是在一些语法生成式的堆栈中间。
-
-在程序继续进行解析之前，它需要将自己的状态和即将到来的标记序列对齐，使下一个标记能够匹配正则解析的规则。这个过程称为**同步**。
-
-为此，我们在语法中选择一些规则来标记同步点。解析器会跳出所有嵌套的生成式直到回退至该规则中，来修复其解析状态。然后，它会丢弃令牌，直到遇到一个可以匹配该规则的标记，以此来同步标记流。
-
-这些被丢弃的标记中隐藏的其它真正的语法错误都不会被报告，但是这也意味着由初始错误引起的其它级联错误也不会被*错误地*报告出来，这是个不错的权衡。
-
-语法中传统的要同步的地方是语句之间。我们还没有这些，所以我们不会在这一章中真正地同步，但我们会在以后把这些机制准备好。
-
-### $5.3.2$ 进入恐慌模式
-
 在我们讨论错误恢复之前，我们正在编写解析括号表达式的代码。在解析表达式之后，会调用`consume()`方法查找收尾的`)`。这里，终于可以实现那个方法了：
 
-*<u>lox/Parser.java，在 match()方法后添加：</u>*
+> 在`Parser.java`文件中，在`match()`方法后添加
 
 ```java
   private Token consume(TokenType type, String message) {
@@ -2352,7 +2098,7 @@ primary        → NUMBER | STRING | "true" | "false" | "nil"
 
 它和 `match() `方法类似，检查下一个标记是否是预期的类型。如果是，它就会消费该标记，一切都很顺利。如果是其它的标记，那么我们就遇到了错误。我们通过调用下面的方法来报告错误：
 
-*<u>lox/Parser.java，在 previous()方法后添加：</u>*
+> 在`Parser.java`文件中，在`previous()`方法后添加
 
 ```java
   private ParseError error(Token token, String message) {
@@ -2363,7 +2109,7 @@ primary        → NUMBER | STRING | "true" | "false" | "nil"
 
 首先，通过调用下面的方法向用户展示错误信息：
 
-*<u>lox/Lox.java，在 report()方法后添加：</u>*
+> 在`Atguigu.java`文件中，在`report()`方法后添加
 
 ```java
   static void error(Token token, String message) {
@@ -2379,33 +2125,29 @@ primary        → NUMBER | STRING | "true" | "false" | "nil"
 
 在我们报告错误后，用户知道了他们的错误，但接下来解析器要做什么呢？回到`error()`方法中，我们创建并返回了一个`ParseError`，是下面这个新类的实例:
 
-*<u>lox/Parser.java，在 Parser中嵌入内部类：</u>*
+> 在`Parser.java`文件中，在`Parser`中嵌入内部类
 
 ```java
-class Parser {  
-  // 新增部分开始
-	private static class ParseError extends RuntimeException {}
-  // 新增部分结束
-  private final List<Token> tokens;
+public class Parser {  
+    // 新增部分开始
+    private static class ParseError extends RuntimeException {}
+    // 新增部分结束
+    private final List<Token> tokens;
 ```
 
 这是一个简单的哨兵类，我们用它来帮助解析器摆脱错误。`error()`方法是*返回*错误而不是*抛出*错误，因为我们希望解析器内的调用方法决定是否要跳脱出该错误。有些解析错误发生在解析器不可能进入异常状态的地方，这时我们就不需要同步。在这些地方，我们只需要报告错误，然后继续解析。
 
-例如，Lox限制了你可以传递给一个函数的参数数量。如果你传递的参数太多，解析器需要报告这个错误，但它可以而且应该继续解析额外的参数，而不是惊慌失措，进入恐慌模式[^11]。
-
-但是，在我们的例子中，语法错误非常严重，以至于我们要进入恐慌模式并进行同步。丢弃标记非常简单，但是我们如何同步解析器自己的状态呢？
-
-## $5.4$ 调整解析器
+## $4.4$ 调整语法分析器
 
 我们现在基本上已经完成了对表达式的解析。我们还需要在另一个地方添加一些错误处理。当解析器在每个语法规则的解析方法中下降时，它最终会进入`primary()`。如果该方法中的case都不匹配，就意味着我们正面对一个不是表达式开头的语法标记。我们也需要处理这个错误。
 
-*<u>lox/Parser.java，在 primary()方法中添加：</u>*
+> 在`Parser.java`文件中，在`primary()`方法中添加
 
 ```java
     if (match(LEFT_PAREN)) {
       Expr expr = expression();
-      consume(RIGHT_PAREN, "表达式的后面应该是')'");
-      return new Expr.Grouping(expr);
+      consume(RIGHT_PAREN, "表达式的后面应该是')'字符。");
+      return new Grouping(expr);
     }
     // 新增部分开头
     throw error(peek(), "这里应该是一个表达式。");
@@ -2415,10 +2157,10 @@ class Parser {
 
 这样，解析器中剩下的工作就是定义一个初始方法来启动它。这个方法自然应该叫做`parse()`。
 
-*<u>lox/Parser.java，在 Parser()方法后添加：</u>*
+> 在`Parser.java`文件中，在`Parser()`方法后添加
 
 ```java
-  Expr parse() {
+  public Expr parse() {
     try {
       return expression();
     } catch (ParseError error) {
@@ -2431,7 +2173,7 @@ class Parser {
 
 当确实出现语法错误时，该方法会返回`null`。这没关系。解析器承诺不会因为无效语法而崩溃或挂起，但它不承诺在发现错误时返回一个*可用的语法树*。一旦解析器报告错误，就会对`hadError`赋值，然后跳过后续阶段。
 
-最后，我们可以将全新的解析器挂到Lox主类并进行试验。我们仍然还没有解释器，所以现在，我们将表达式解析为一个语法树，然后使用上一章中的AstPrinter类来显示它。
+最后，我们可以将全新的解析器挂到`Atguigu.java`主类并进行试验。我们仍然还没有解释器，所以现在，我们将表达式解析为一个语法树，然后使用上一章中的`AstPrinter`类来显示它。
 
 删除打印已扫描标记的旧代码，将其替换为：
 
@@ -2451,9 +2193,9 @@ class Parser {
   }
 ```
 
-祝贺你，你已经跨过了门槛!这就是手写解析器的全部内容。我们将在后面的章节中扩展赋值、语句和其它特性对应的语法，但这些都不会比我们本章处理的二元操作符更复杂。
+祝贺你，你已经跨过了门槛！这就是手写语法分析器的全部内容。我们将在后面的章节中扩展赋值、语句和其它特性对应的语法，但这些都不会比我们本章处理的二元操作符更复杂。
 
-启动解释器并输入一些表达式。查看它是如何正确处理优先级和结合性的?这对于不到200行代码来说已经很不错了。
+启动解释器并输入一些表达式。查看它是如何正确处理优先级和结合性的？这对于不到$200$行代码来说已经很不错了。
 
 # 6. 表达式求值
 
