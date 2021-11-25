@@ -1948,8 +1948,6 @@ equality       = comparison ( ( "!=" | "==" ) comparison )* ;
 
 我们获取到匹配的操作符标记，这样就可以知道我们要处理哪一类等式表达式。之后，我们再次调用`comparison()`解析右边的操作数。我们将操作符和它的两个操作数组合成一个新的`Binary`语法树节点，然后开始循环。对于每一次迭代，我们都将结果表达式存储在同一个`expr`局部变量中。在对等式表达式序列进行压缩时，会创建一个由二元操作符节点组成的左结合嵌套树。
 
-![The syntax tree created by parsing 'a == b == c == d == e'](6.解析表达式/sequence.png)
-
 一旦解析器遇到一个不是等式操作符的标记，就会退出循环。最后，它会返回对应的表达式。请注意，如果解析器从未遇到过等式操作符，它就永远不会进入循环。在这种情况下，`equality()`方法有效地调用并返回`comparison()`。这样一来，这个方法就会匹配一个等式运算符或 **任何更高优先级的表达式** 。
 
 继续看下一个规则。
@@ -2272,7 +2270,18 @@ public class Interpreter {
 
 ```java
   private Object evaluate(Expr expr) {
-    return expr.accept(this);
+        if (expr instanceof Literal) {
+            return evaluateLiteralExpr((Literal) expr);
+        } else if (expr instanceof Grouping) {
+            return evaluateGroupingExpr((Grouping) expr);
+        } else if (expr instanceof Unary) {
+            return evaluateUnaryExpr((Unary) expr);
+        } else if (expr instanceof Binary) {
+            return evaluateBinaryExpr((Binary) expr);
+        }
+
+        return null;
+    }
 ```
 
 ### $5.2.3$ 一元表达式求值
@@ -2489,7 +2498,7 @@ public class RuntimeError extends RuntimeException {
 }
 ```
 
-与Java转换异常不同，我们的类会跟踪语法标记，可以指明用户代码中抛出运行时错误的位置。与静态错误一样，这有助于用户知道去哪里修复代码。
+与$Java$强制类型转换异常不同，我们的类会跟踪语法标记，可以指明用户代码中抛出运行时错误的位置。与静态错误一样，这有助于用户知道去哪里修复代码。
 
 我们需要对二元运算符进行类似的检查。既然我答应了要展示实现解释器所需的每一行代码，那么我就把它们逐一介绍一遍。
 
@@ -2649,7 +2658,7 @@ $Atguigu$编程语言即使对整数值也使用双精度数字。在这种情�
 > 在`Atguigu.java`文件中，在`error()`方法后添加
 
 ```java
-  static void runtimeError(RuntimeError error) {
+  public static void runtimeError(RuntimeError error) {
     System.err.println(error.getMessage() +
         "\n[行号 " + error.token.line + "]");
     hadRuntimeError = true;
@@ -2718,15 +2727,11 @@ public class Atguigu {
 
 我们现在有一个完整的语言流水线：词法分析、语法分析和解释执行。
 
-![A skeleton waving hello.](7.表达式求值/skeleton.png)
-
 # $6$ 语句和状态
 
 到目前为止，我们提供解释器的感觉不太像是在使用一种真正的语言进行编程，更像是在计算器上按按钮。对我来说，"编程 "意味着用较小的部分构建出一个系统。我们目前还不支持这样做，因为我们还无法将一个名称绑定到某个数据或函数。我们不能在无法引用小片段的情况下编写软件。
 
 为了支持绑定，我们的解释器需要保存内部状态。如果你在程序开始处定义了一个变量，并在结束处使用它，那么解释器必须在这期间保持该变量的值。所以在这一章中，我们会给解释器一个大脑，它不仅可以运算，而且可以**记忆**。
-
-![A brain, presumably remembering stuff.](8.表达式和状态/brain.png)
 
 状态和语句是相辅相成的。因为根据定义，语句不会计算出一个具体值，而是需要做一些事情来发挥作用。这些事情被称为**副作用**（$side \; effect$）。它可能意味着产生用户可见的输出，或者修改解释器中的一些状态，而这些状态后续可以被检测到。第二个特性使得语句非常适合于定义变量或其他命名实体。
 
@@ -2764,17 +2769,45 @@ printStmt      = "print" "(" expression ")" ";" ;
 
 这意味着要为语句创建一个新的基类。正如我们的前辈那样，我们将使用$Stmt$这个隐秘的名字。
 
-*<u>tool/GenerateAst.java，在 main()方法中新增：</u>*
+> 创建新文件`Stmt.java`
 
 ```java
-      "Unary    : Token operator, Expr right"
-    ));
-    
-    defineAst(outputDir, "Stmt", Arrays.asList(
-      "Expression : Expr expression",
-      "Print      : Expr expression"
-    ));
-  }
+package com.atguigu;
+
+public abstract class Stmt {
+}
+```
+
+然后我们为表达式语句来创建抽象语法树的节点类型。
+
+> 创建新文件`Expression.java`
+
+```java
+package com.atguigu;
+
+public class Expression extends Stmt {
+    public final Expr expression;
+
+    public Expression(Expr expression) {
+        this.expression = expression;
+    }
+}
+```
+
+然后我们为`print`语句创建抽象语法树的节点类型。
+
+> 创建新文件`Print.java`
+
+```java
+package com.atguigu;
+
+public class Print extends Stmt {
+    public final Expr expression;
+
+    public Print(Expr expression) {
+        this.expression = expression;
+    }
+}
 ```
 
 ### $6.1.2$ 解析语句
@@ -2828,9 +2861,11 @@ import java.util.List;
 
 ```java
   private Stmt printStatement() {
-    Expr value = expression();
-    consume(SEMICOLON, "Expect ';' after value.");
-    return new Stmt.Print(value);
+      consume(LEFT_PAREN, "print语句必须有左括号。");
+      Expr value = expression();
+      consume(RIGHT_PAREN, "print语句必须有右括号。")
+      consume(SEMICOLON, "print语句结尾必须有分号。");
+      return new Print(value);
   }
 ```
 
@@ -2856,8 +2891,8 @@ import java.util.List;
 
 ```java
   public Void executeExpressionStmt(Expression stmt) {
-    evaluate(stmt.expression);
-    return null;
+      evaluate(stmt.expression);
+      return null;
   }
 ```
 
@@ -2869,15 +2904,15 @@ import java.util.List;
 
 ```java
   public Void executePrintStmt(Print stmt) {
-    Object value = evaluate(stmt.expression);
-    System.out.println(stringify(value));
-    return null;
+      Object value = evaluate(stmt.expression);
+      System.out.println(stringify(value));
+      return null;
   }
 ```
 
 在丢弃表达式的值之前，我们使用上一章引入的`stringify()`方法将其转换为字符串，然后将其输出到标准输出。
 
-我们的解释器现在可以处理语句了，但是我们还需要做一些工作将语句输入到解释器中。首先，修改Interpreter类中原有的`interpret()` 方法，让其能够接受一组语句——即一段程序。
+我们的解释器现在可以处理语句了，但是我们还需要做一些工作将语句输入到解释器中。首先，修改`Interpreter`类中原有的`interpret()` 方法，让其能够接受一组语句—即一段程序。
 
 > 在`Interpreter.java`文件中，修改`interpret()`方法，替换$8$行
 
@@ -2951,43 +2986,43 @@ print(2 + 1);
 
 ## $6.2$ 全局变量
 
-现在我们已经有了语句，可以开始出了状态了。在深入探讨语法作用域的复杂性之前，我们先从最简单的变量（全局变量）开始。我们需要两个新的结构。
+现在我们已经有了语句，可以开始处理状态了。在深入探讨语法作用域的复杂性之前，我们先从最简单的变量（全局变量）开始。我们需要两个新的结构。
 
 1. **变量声明**语句用于创建一个新变量。
    
    ```javascript
-   var beverage = "espresso";
+   var name = "atguigu";
    ```
    
-   该语句将创建一个新的绑定，将一个名称（这里是 `beverage`）和一个值（这里是字符串 `"espresso"`）关联起来。
+   该语句将创建一个新的绑定，将一个名称（这里是 `name`）和一个值（这里是字符串 `"atguigu"`）关联起来。
    
-2. 一旦声明完成，**变量表达式**就可以访问该绑定。当标识符“beverage”被用作一个表达式时，程序会查找与该名称绑定的值并返回。
+2. 一旦声明完成，**变量表达式**就可以访问该绑定。当标识符`name`被用作一个表达式时，程序会查找与该名称绑定的值并返回。
    
    ```javascript
-   print beverage; // "espresso".
+   print(name); // "atguigu".
    ```
 
 稍后，我们会添加赋值和块作用域，但是这些已经足够继续后面的学习了。
 
 ### $6.2.1$ 变量语法
 
-与前面一样，我们将从语法开始，从前到后依次完成实现。变量声明是一种语句，但它们不同于其他语句，我们把statement语法一分为二来处理该情况。这是因为语法要限制某个位置上哪些类型的语句是被允许的。
+与前面一样，我们将从语法开始，从前到后依次完成实现。变量声明是一种语句，但它们不同于其他语句，我们把语句的语法一分为二来处理该情况。这是因为语法要限制某个位置上哪些类型的语句是被允许的。
 
-控制流语句中的子句—比如，`if`或`while`语句体中的`then`和`else`分支—都是一个语句。但是这个语句不应该是一个声明名称的语句。下面的代码是OK的：
+控制流语句中的子句—比如，`if`或`while`语句体中的`then`和`else`分支—都是一个语句。但是这个语句不应该是一个声明名称的语句。下面的代码是$OK$的：
 
 ```java
-if (monday) print "Ugh, already?";
+if (monday) print("准备好上班了吗？");
 ```
 
 但是下面的代码不行：
 
 ```java
-if (monday) var beverage = "espresso";
+if (monday) var name = "atguigu";
 ```
 
-我们也*可以*允许后者，但是会令人困惑。 `beverage`变量的作用域是什么？`if`语句结束之后它是否还继续存在？如果存在的话，在其它条件下它的值是什么？这个变量是否在其它情形下也一直存在？
+我们也 **可以** 允许后者，但是会令人困惑。 `name`变量的作用域是什么？`if`语句结束之后它是否还继续存在？如果存在的话，在其它条件下它的值是什么？这个变量是否在其它情形下也一直存在？
 
-这样的代码有点奇怪，所以C、Java及类似语言中都不允许这种写法。语句就好像有两个“优先级”。有些允许语句的地方—比如在代码块内或程序顶层—可以允许任何类型的语句，包括变量声明。而其他地方只允许那些不声明名称的、优先级更高的语句。
+这样的代码有点奇怪，所以$C$、$Java$及类似语言中都不允许这种写法。语句就好像有两个“优先级”。有些允许语句的地方—比如在代码块内或程序顶层—可以允许任何类型的语句，包括变量声明。而其他地方只允许那些不声明名称的、优先级更高的语句。
 
 为了适应这种区别，我们为声明名称的语句类型添加了另一条规则：
 
@@ -3022,35 +3057,40 @@ primary        = "true" | "false" | "nil"
 
  `IDENTIFIER` 子语句会匹配单个标识符标记，该标记会被理解为正在访问的变量的名称。
 
-这些新的语法规则需要其相应的语法树。在AST生成器中，我们为变量声明添加一个新的语句树。
+这些新的语法规则需要其相应的语法树。
 
-*<u>tool/GenerateAst.java，在 main()方法中添加一行，前一行需要加`,`：</u>*
+> 创建新文件`Var.java`
 
 ```java
-      "Expression : Expr expression",
-      "Print      : Expr expression",
-      // 新增部分开始
-      "Var        : Token name, Expr initializer"
-      // 新增部分结束
-    ));
+package com.atguigu;
+
+public class Var extends Stmt {
+    public final Token name;
+    public final Expr initializer;
+    
+    public Var(Token name, Expr initializer) {
+        this.name = name;
+        this.initializer = initializer;
+    }
+}
 ```
 
 这里存储了名称标记，以便我们知道该语句声明了什么，此外还有初始化表达式（如果没有，字段就是`null`）。
 
 然后我们添加一个表达式节点用于访问变量。
 
-*<u>tool/GenerateAst.java，在 main()方法中添加一行，前一行需要加`,`：</u>*
+> 创建新文件`Variable.java`
 
-```javascript
-      "Literal  : Object value",
-      "Unary    : Token operator, Expr right",
-      // 新增部分开始
-      "Variable : Token name"
-      // 新增部分结束
-    ));
+```java
+package com.atguigu;
+
+public class Variable extends Expr {
+    public final Token name;
+    public Variable(Token name) {
+        this.name = name;
+    }
+}
 ```
-
-这只是对变量名称标记的简单包装，就是这样。像往常一样，别忘了运行AST生成器脚本，这样你就能得到更新的 "Expr.java "和 "Stmt.java "文件。
 
 ### $6.2.2$ 解析变量
 
@@ -3102,15 +3142,15 @@ primary        = "true" | "false" | "nil"
 
 ```java
   private Stmt varDeclaration() {
-    Token name = consume(IDENTIFIER, "Expect variable name.");
+    Token name = consume(IDENTIFIER, "这里应该是一个变量名。");
 
     Expr initializer = null;
     if (match(EQUAL)) {
       initializer = expression();
     }
 
-    consume(SEMICOLON, "Expect ';' after variable declaration.");
-    return new Stmt.Var(name, initializer);
+    consume(SEMICOLON, "变量声明语句最后必须是分号。");
+    return new Var(name, initializer);
   }
 ```
 
@@ -3123,11 +3163,11 @@ primary        = "true" | "false" | "nil"
 > 在`Parser.java`文件中，在`primary()`方法中添加
 
 ```java
-      return new Expr.Literal(previous().literal);
+      return new Literal(previous().literal);
     }
     // 新增部分开始
     if (match(IDENTIFIER)) {
-      return new Expr.Variable(previous());
+      return new Variable(previous());
     }
     // 新增部分开始
     if (match(LEFT_PAREN)) {
@@ -3141,7 +3181,7 @@ primary        = "true" | "false" | "nil"
 
 ![An environment containing two bindings.](8.表达式和状态/environment-0971366.png)
 
-你可以把它想象成一个映射，其中键是变量名称，值就是变量的值[^6]。实际上，这也就是我们在Java中采用的实现方式。我们可以直接在解释器中加入该映射及其管理代码，但是因为它形成了一个很好的概念，我们可以将其提取到单独的类中。
+你可以把它想象成一个映射，其中键是变量名称，值就是变量的值。实际上，这也就是我们在Java中采用的实现方式。我们可以直接在解释器中加入该映射及其管理代码，但是因为它形成了一个很好的概念，我们可以将其提取到单独的类中。
 
 > 创建新文件`Environment.java`
 
@@ -3172,16 +3212,16 @@ public class Environment {
 
 ```javascript
 var a = "before";
-print a; // "before".
+print(a); // "before".
 var a = "after";
-print a; // "after".
+print(a); // "after".
 ```
 
 变量语句不仅可以定义一个新变量，也可以用于重新定义一个已有的变量。我们可以选择将其作为一个错误来处理。用户可能不打算重新定义已有的变量（如果他们想这样做，可能会使用赋值，而不是`var`），将重定义作为错误可以帮助用户发现这个问题。
 
-然而，这样做与REPL的交互很差。在与REPL的交互中，最好是让用户不必在脑子记录已经定义了哪些变量。我们可以在REPL中允许重定义，在脚本中不允许。但是这样一来，用户就不得不学习两套规则，而且一种形式的代码复制粘贴到另一种形式后可能无法运行。
+然而，这样做与$REPL$的交互很差。在与$REPL$的交互中，最好是让用户不必在脑子记录已经定义了哪些变量。我们可以在$REPL$中允许重定义，在脚本中不允许。但是这样一来，用户就不得不学习两套规则，而且一种形式的代码复制粘贴到另一种形式后可能无法运行。
 
-所以，为了保证两种模式的统一，我们选择允许重定义——至少对于全局变量如此。一旦一个变量存在，我们就需要可以查找该变量的方法。
+所以，为了保证两种模式的统一，我们选择允许重定义—至少对于全局变量如此。一旦一个变量存在，我们就需要可以查找该变量的方法。
 
 > 在`Environment.java`文件中，在`Environment`类中添加
 
@@ -3195,7 +3235,7 @@ public class Environment {
     }
 
     throw new RuntimeError(name,
-        "Undefined variable '" + name.lexeme + "'.");
+        "未定义变量 '" + name.lexeme + "'。");
   }
   // 新增部分结束
   public void define(String name, Object value) {
@@ -3209,11 +3249,11 @@ public class Environment {
   
 - 允许该操作并返回默认值（如`nil`）
 
-Lox是很宽松的，但最后一个选项对我来说有点过于宽松了。把它作为语法错误（一个编译时的错误）似乎是一个明智的选择。使用未定义的变量确实是一个错误，用户越早发现这个错误就越好。
+我们把最后一个选项作为语法错误（一个编译时的错误）。使用未定义的变量确实是一个错误，用户越早发现这个错误就越好。
 
-问题在于，*使用*一个变量并不等同于*引用*它。如果代码块封装在函数中，则可以在代码块中引用变量，而不必立即对其求值。如果我们把引用未声明的变量当作一个静态错误，那么定义递归函数就变得更加困难了。
+问题在于，**使用** 一个变量并不等同于 **引用** 它。如果代码块封装在函数中，则可以在代码块中引用变量，而不必立即对其求值。如果我们把引用未声明的变量当作一个静态错误，那么定义递归函数就变得更加困难了。
 
-通过在检查函数体之前先声明函数名称，我们可以支持单一递归——调用自身的函数。但是，这无法处理互相调用的递归程序。考虑以下代码：
+通过在检查函数体之前先声明函数名称，我们可以支持单一递归—调用自身的函数。但是，这无法处理互相调用的递归程序。考虑以下代码：
 
 ```js
 function isOdd(n) {
@@ -3227,12 +3267,12 @@ function isEven(n) {
 }
 ```
 
-当我们查看`isOdd()`方法时， `isEven()` 方法被调用的时候还没有被声明。如果我们交换着两个函数的顺序，那么在查看`isEven()`方法体时会发现`isOdd()`方法未被定义。
+当我们查看`isOdd()`方法时， `isEven()` 方法被调用的时候还没有被声明。如果我们交换这两个函数的顺序，那么在查看`isEven()`方法体时会发现`isOdd()`方法未被定义。
 
-因为将其当作*静态*错误会使递归声明过于困难，因此我们把这个错误推迟到运行时。在一个变量被定义之前引用它是可以的，只要你不对引用进行*求值*。这样可以让前面的奇偶数代码正常工作。但是执行以下代码时，你会得到一个运行时错误：
+因为将其当作 **静态** 错误会使递归声明过于困难，因此我们把这个错误推迟到运行时。在一个变量被定义之前引用它是可以的，只要你不对引用进行 **求值** 。这样可以让前面的奇偶数代码正常工作。但是执行以下代码时，你会得到一个运行时错误：
 
 ```javascript
-print a;
+print(a);
 var a = "too late!";
 ```
 
@@ -3256,11 +3296,10 @@ public class Interpreter {
 
 我们有两个新的语法树，所以这就是两个新的访问方法。第一个是关于声明语句的。
 
-*<u>lox/Interpreter.java，在 visitPrintStmt()方法后添加：</u>*
+> 在`Interpreter.java`文件中，在`executePrintStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitVarStmt(Stmt.Var stmt) {
+  public Void executeVarStmt(Stmt.Var stmt) {
     Object value = null;
     if (stmt.initializer != null) {
       value = evaluate(stmt.initializer);
@@ -3271,25 +3310,22 @@ public class Interpreter {
   }
 ```
 
-如果该变量有初始化式，我们就对其求值。如果没有，我们就需要做一个选择。我们可以通过在解析器中*要求*初始化式令其成为一个语法错误。但是，大多数语言都不会这么做，所以在Lox中这样做感觉有点苛刻。
-
-我们可以使其成为运行时错误。我们允许您定义一个未初始化的变量，但如果您在对其赋值之前访问它，就会发生运行时错误。这不是一个坏主意，但是大多数动态类型的语言都不会这样做。相反，我们使用最简单的方式。或者说，如果变量没有被显式初始化，$Atguigu$会将变量设置为`nil`。
+如果该变量有初始化式，我们就对其求值。如果变量没有被显式初始化，$Atguigu$会将变量设置为`nil`。
 
 ```javascript
 var a;
 print(a); // "nil".
 ```
 
-因此，如果没有初始化式，我们将值设为`null`，这也是Lox中的`nil`值的Java表示形式。然后，我们告诉环境上下文将变量与该值进行绑定。
+因此，如果没有初始化式，我们将值设为`null`，这也是$Atguigu$语言中的`nil`值的$Java$表示形式。然后，我们告诉环境上下文将变量与该值进行绑定。
 
 接下来，我们要对变量表达式求值。
 
-*<u>lox/Interpreter.java，在 visitUnaryExpr()方法后添加：</u>*
+> 在`Interpreter.java`文件中，在`evaluateUnaryExpr()`方法后添加
 
 ```java
-  @Override
-  public Object visitVariableExpr(Expr.Variable expr) {
-    return environment.get(expr.name);
+  public Object evaluateVariableExpr(Expr.Variable expr) {
+      return environment.get(expr.name);
   }
 ```
 
@@ -3305,41 +3341,37 @@ print(a + b);
 
 ## $6.4$ 赋值
 
-你可以创建一种语言，其中有变量，但是不支持对该变量重新赋值（或更改）。Haskell就是一个例子。SML只支持可变引用和数组——变量不能被重新赋值。Rust则通过要求`mut`标识符开启赋值，从而引导用户远离可更改变量。
-
-更改变量是一种副作用，顾名思义，一些语言专家认为副作用是肮脏或不优雅的。代码应该是纯粹的数学，它会产生值——纯净的、不变的值——就像上帝造物一样。而不是一些肮脏的自动机器，将数据块转换成各种形式，一次执行一条命令。
-
-Lox没有这么严苛。Lox是一个命令式语言，可变性是与生俱来的，添加对赋值操作的支持并不需要太多工作。全局变量已经支持了重定义，所以该机制的大部分功能已经存在。主要的是，我们缺少显式的赋值符号。
-
 ### $6.4.1$ 赋值语法
 
-这个小小的`=`语法比看起来要更复杂。像大多数C派生语言一样，赋值是一个表达式，而不是一个语句。和C语言中一样，它是优先级最低的表达式形式。这意味着该规则在语法中处于 `expression` 和`equality`（下一个优先级的表达式）之间。
+这个小小的`=`语法比看起来要更复杂。像$JS$一样，赋值是一个表达式，而不是一个语句。和$JS$语言中一样，它是优先级最低的表达式形式。这意味着该规则在语法中处于 `expression` 和`equality`（下一个优先级的表达式）之间。
 
 ```javascript
-expression     → assignment ;
-assignment     → IDENTIFIER "=" assignment
+expression     = assignment ;
+assignment     = IDENTIFIER "=" assignment
                | equality ;
 ```
 
-这就是说，一个`assignment`（赋值式）要么是一个标识符，后跟一个`=`和一个对应值的表达式；要么是一个等式（也就是任何其它）表达式。稍后，当我们在对象中添加属性设置式时，赋值将会变得更加复杂，比如：
+这就是说，一个`assignment`（赋值式）要么是一个标识符，后跟一个`=`和一个对应值的表达式；要么是一个等式（也就是任何其它）表达式。
+
+让我们为赋值表达式创建抽象语法树的节点类型：
+
+> 创建新文件`Assign.java`
 
 ```java
-instance.field = "value";
+package com.atguigu;
+
+public class Assign extends Expr {
+    public final Token name;
+    public final Expr value;
+    
+    public Assign(Token name, Expr value) {
+        this.name = name;
+        this.value = value;
+    }
+}
 ```
 
-最简单的部分就是添加新的语法树节点。
-
-*<u>tool/GenerateAst.java，在 main()方法中添加：</u>*
-
-```java
-    defineAst(outputDir, "Expr", Arrays.asList(
-      // 新增部分开始
-      "Assign   : Token name, Expr value",
-      // 新增部分结束
-      "Binary   : Expr left, Token operator, Expr right",
-```
-
-其中包含被赋值变量的标记，一个计算新值的表达式。运行AstGenerator得到新的`Expr.Assign`类之后，替换掉解析器中现有的`expression()`方法的方法体，以匹配最新的规则。
+我们必须对`expression`方法使用新的规则，如下：
 
 > 在`Parser.java`文件中，在`expression()`方法中替换$1$行
 
@@ -3351,7 +3383,7 @@ instance.field = "value";
   }
 ```
 
-这里开始变得棘手。单个标记前瞻递归下降解析器直到解析完左侧标记并且遇到`=`标记*之后*，才能判断出来正在解析的是赋值语句。你可能会想，为什么需要这样做？毕竟，我们也是完成左操作数的解析之后才知道正在解析的是`+`表达式。
+单个标记前瞻递归下降解析器直到解析完左侧标记并且遇到`=`标记*之后*，才能判断出来正在解析的是赋值语句。你可能会想，为什么需要这样做？毕竟，我们也是完成左操作数的解析之后才知道正在解析的是`+`表达式。
 
 区别在于，赋值表达式的左侧不是可以求值的表达式，而是一种伪表达式，计算出的是一个你可以赋值的“东西”。考虑以下代码：
 
@@ -3360,17 +3392,13 @@ var a = "before";
 a = "value";
 ```
 
-在第二行中，我们不会对`a`进行求值（如果求值会返回“before”）。我们要弄清楚`a`指向的是什么变量，这样我们就知道该在哪里保存右侧表达式的值。这两个概念的经典术语是**左值**和**右值**。到目前为止，我们看到的所有产生值的表达式都是右值。左值"计算"会得到一个存储位置，你可以向其赋值。
+在第二行中，我们不会对`a`进行求值（如果求值会返回`"before"`）。我们要弄清楚`a`指向的是什么变量，这样我们就知道该在哪里保存右侧表达式的值。这两个概念的经典术语是**左值**和**右值**。到目前为止，我们看到的所有产生值的表达式都是右值。左值计算会得到一个存储位置，我们可以向它赋值。
 
-我们希望语法树能够反映出左值不会像常规表达式那样计算。这也是为什么Expr.Assign节点的左侧是一个Token，而不是Expr。问题在于，解析器直到遇到`=`才知道正在解析一个左值。在一个复杂的左值中，可能在出现很多标记之后才能识别到。
-
-```java
-makeList().head.next = node;
-```
+我们希望语法树能够反映出左值不会像常规表达式那样计算。这也是为什么`Assign`节点的左侧是一个`Token`，而不是`Expr`。问题在于，解析器直到遇到`=`才知道正在解析一个左值。
 
 我们只会前瞻一个标记，那我们该怎么办呢？我们使用一个小技巧，看起来像下面这样：
 
-*<u>lox/Parser.java，在 expressionStatement()方法后添加：</u>*
+> 在`Parser.java`文件中，在`expressionStatement()`方法后添加
 
 ```java
   private Expr assignment() {
@@ -3380,12 +3408,12 @@ makeList().head.next = node;
       Token equals = previous();
       Expr value = assignment();
 
-      if (expr instanceof Expr.Variable) {
-        Token name = ((Expr.Variable)expr).name;
-        return new Expr.Assign(name, value);
+      if (expr instanceof Variable) {
+        Token name = ((Variable)expr).name;
+        return new Assign(name, value);
       }
 
-      error(equals, "Invalid assignment target."); 
+      error(equals, "无效的赋值目标。"); 
     }
 
     return expr;
@@ -3394,23 +3422,11 @@ makeList().head.next = node;
 
 解析赋值表达式的大部分代码看起来与解析其它二元运算符（如`+`）的代码类似。我们解析左边的内容，它可以是任何优先级更高的表达式。如果我们发现一个`=`，就解析右侧内容，并把它们封装到一个复杂表达式树节点中。
 
-与二元运算符的一个细微差别在于，我们不会循环构建相同操作符的序列。因为赋值操作是右关联的，所以我们递归调用 `assignment()`来解析右侧的值。
+与二元运算符的一个细微差别在于，我们不会循环构建相同操作符的序列。因为赋值操作是右结合的，所以我们递归调用 `assignment()`来解析右侧的值。
 
 诀窍在于，在创建赋值表达式节点之前，我们先查看左边的表达式，弄清楚它是什么类型的赋值目标。然后我们将右值表达式节点转换为左值的表示形式。
 
-这种转换是有效的，因为事实证明，每个有效的赋值目标正好也是符合普通表达式的有效语法。考虑一个复杂的属性赋值操作，如下：
-
-```java
-newPoint(x + 2, 0).y = 3;
-```
-
-该赋值表达式的左侧也是一个有效的表达式。
-
-```java
-newPoint(x + 2, 0).y;
-```
-
-第一个例子设置该字段，第二个例子获取该字段。
+这种转换是有效的，因为事实证明，每个有效的赋值目标正好也是符合普通表达式的有效语法。
 
 这意味着，我们可以像解析表达式一样解析左侧内容，然后生成一个语法树，将其转换为赋值目标。如果左边的表达式不是一个有效的赋值目标，就会出现一个语法错误。这样可以确保在遇到类似下面的代码时会报告错误：
 
@@ -3418,67 +3434,66 @@ newPoint(x + 2, 0).y;
 a + b = c;
 ```
 
-现在，唯一有效的赋值目标就是一个简单的变量表达式，但是我们后面会添加属性字段。这个技巧的最终结果是一个赋值表达式树节点，该节点知道要向什么赋值，并且有一个表达式子树用于计算要使用的值。所有这些都只用了一个前瞻标记，并且没有回溯。
+现在，唯一有效的赋值目标就是一个简单的变量表达式。这个技巧的最终结果是一个赋值表达式树节点，该节点知道要向什么赋值，并且有一个表达式子树用于计算要使用的值。所有这些都只用了一个前瞻标记，并且没有回溯。
 
 ### $6.4.2$ 赋值的语义
 
 我们有了一个新的语法树节点，所以我们的解释器也需要一个新的访问方法。
 
-*<u>lox/Interpreter.java，在 visitVarStmt()方法后添加：</u>*
+> 在`Interpreter.java`文件中，在`executeVarStmt()`方法后添加
 
 ```java
-  @Override
-  public Object visitAssignExpr(Expr.Assign expr) {
+  public Object evaluateAssignExpr(Assign expr) {
     Object value = evaluate(expr.value);
     environment.assign(expr.name, value);
     return value;
   }
 ```
 
-很明显，这与变量声明很类似。首先，对右侧表达式运算以获取值，然后将其保存到命名变量中。这里不使用Environment中的 `define()`，而是调用下面的新方法：
+很明显，这与变量声明很类似。首先，对右侧表达式运算以获取值，然后将其保存到命名变量中。这里不使用`Environment`中的 `define()`，而是调用下面的新方法：
 
-*<u>lox/Environment.java，在 get()方法后添加：</u>*
+> 在`Environment.java`文件中，在`get()`方法后添加
 
 ```java
-  void assign(Token name, Object value) {
+  public void assign(Token name, Object value) {
     if (values.containsKey(name.lexeme)) {
       values.put(name.lexeme, value);
       return;
     }
 
     throw new RuntimeError(name,
-        "Undefined variable '" + name.lexeme + "'.");
+        "未定义变量 '" + name.lexeme + "'。");
   }
 ```
 
 赋值与定义的主要区别在于，赋值操作不允许创建新变量。就我们的实现而言，这意味着如果环境的变量映射中不存在变量的键，那就是一个运行时错误。
 
-`visit()`方法做的最后一件事就是返回要赋给变量的值。这是因为赋值是一个表达式，可以嵌套在其他表达式里面，就像这样:
+上面的方法做的最后一件事就是返回要赋给变量的值。这是因为赋值是一个表达式，可以嵌套在其他表达式里面，就像这样：
 
 ```javascript
 var a = 1;
-print a = 2; // "2".
+print(a = 2); // "2".
 ```
 
-我们的解释器现在可以创建、读取和修改变量。这和早期的BASICs一样复杂。全局变量很简单，但是在编写一个大型程序时，任何两块代码都可能不小心修改对方的状态，这就不好玩了。我们需要*局部*变量，这意味着是时候讨论*作用域*了。
+我们的解释器现在可以创建、读取和修改变量。全局变量很简单，但是在编写一个大型程序时，任何两块代码都可能不小心修改对方的状态，这就不好玩了。我们需要 **局部** 变量，这意味着是时候讨论 **作用域** 了。
 
 ## $6.5$ 作用域
 
-**作用域**定义了名称映射到特定实体的一个区域。多个作用域允许同一个名称在不同的上下文中指向不同的内容。在我家，“Bob”通常指的是我自己，但是在你的身边，你可能人数另外一个Bob。相同的名字，基于你的所知所见指向了不同的人。
+**作用域**定义了名称映射到特定实体的一个区域。多个作用域允许同一个名称在不同的上下文中指向不同的内容。
 
-**词法作用域**（或者比较少见的**静态作用域**）是一种特殊的作用域定义方式，程序本身的文本显示了作用域的开始和结束位置。Lox，和大多数现代语言一样，变量在词法作用域内有效。当你看到使用了某些变量的表达式时，你通过静态地阅读代码就可以确定其指向的变量声明。
+**词法作用域**（或者叫**静态作用域**）是一种特殊的作用域定义方式，程序本身的文本显示了作用域的开始和结束位置。$Atguigu$编程语言，和大多数现代语言一样，变量在词法作用域内有效。当我们看到使用了某些变量的表达式时，可以通过静态地阅读代码就可以确定其指向的变量声明。
 
 举例来说：
 
 ```javascript
 {
   var a = "first";
-  print a; // "first".
+  print(a); // "first".
 }
 
 {
   var a = "second";
-  print a; // "second".
+  print(a); // "second".
 }
 ```
 
@@ -3486,35 +3501,15 @@ print a = 2; // "2".
 
 ![An environment for each 'a'.](8.表达式和状态/blocks.png)
 
-这与**动态作用域**形成了对比，在动态作用域中，直到执行代码时才知道名称指向的是什么。Lox没有动态作用域*变量*，但是对象上的方法和字段是动态作用域的。
+这与**动态作用域**形成了对比，在动态作用域中，直到执行代码时才知道名称指向的是什么。
 
-```java
-class Saxophone {
-  play() {
-    print "Careless Whisper";
-  }
-}
-
-class GolfClub {
-  play() {
-    print "Fore!";
-  }
-}
-
-fun playIt(thing) {
-  thing.play();
-}
-```
-
-当`playIt()`调用`thing.play()`时，我们不知道我们将要听到的是 "Careless Whisper "还是 "Fore!" 。这取决于你向函数传递的是Saxophone还是GolfClub，而我们在运行时才知道这一点。
-
-作用域和环境是近亲，前者是理论概念，而后者是实现它的机制。当我们的解释器处理代码时，影响作用域的语法树节点会改变环境上下文。在像Lox这样的类C语言语法中，作用域是由花括号的块控制的。（这就是为什么我们称它为**块范围**）。
+作用域和环境是近亲，前者是理论概念，而后者是实现它的机制。当我们的解释器处理代码时，影响作用域的语法树节点会改变环境上下文。在像$Atguigu$这样的类$JS$语言语法中，作用域是由花括号的块控制的。（这就是为什么我们称它为**块范围**）。
 
 ```java
 {
   var a = "in block";
 }
-print a; // Error! No more "a".
+print(a); // Error! No more "a".
 ```
 
 块的开始引入了一个新的局部作用域，当执行通过结束的`}`时，这个作用域就结束了。块内声明的任何变量都会消失。
@@ -3527,7 +3522,7 @@ print a; // Error! No more "a".
 
 2. 执行完最后一条语句后，告诉环境将这些变量全部删除。
 
-这对前面的例子是可行的。但是请记住，局部作用域的一个目的是封装——程序中一个块内的代码，不应该干扰其他代码块。看看下面的例子：
+这对前面的例子是可行的。但是请记住，局部作用域的一个目的是封装—程序中一个块内的代码，不应该干扰其他代码块。看看下面的例子：
 
 ```java
 // How loud?
@@ -3539,13 +3534,13 @@ volume = 0;
 // Calculate size of 3x4x5 cuboid.
 {
   var volume = 3 * 4 * 5;
-  print volume;
+  print(volume);
 }
 ```
 
 请看这个代码块，在这里我们声明了一个局部变量`volume`来计算长方体的体积。该代码块退出后，解释器将删除*全局*`volume`变量。这是不对的。当我们退出代码块时，我们应该删除在块内声明的所有变量，但是如果在代码块外声明了相同名称的变量，那就是一个不同的变量。它不应该被删除。
 
-当局部变量与外围作用域中的变量具有相同的名称时，内部变量会遮蔽外部变量。代码块内部不能再看到外部变量——它被遮蔽在内部变量的阴影中——但它仍然是存在的。
+当局部变量与外围作用域中的变量具有相同的名称时，内部变量会遮蔽外部变量。代码块内部不能再看到外部变量—它被遮蔽在内部变量的阴影中—但它仍然是存在的。
 
 当进入一个新的块作用域时，我们需要保留在外部作用域中定义的变量，这样当我们退出内部代码块时这些外部变量仍然存在。为此，我们为每个代码块定义一个新的环境，该环境只包含该作用域中定义的变量。当我们退出代码块时，我们将丢弃其环境并恢复前一个环境。
 
@@ -3555,39 +3550,39 @@ volume = 0;
 var global = "outside";
 {
   var local = "inside";
-  print global + local;
+  print(global + local);
 }
 ```
 
-这段代码中，`global`在外部全局环境中，`local`则在块环境中定义。在执行print`语句时，这两个变量都在作用域内。为了找到它们，解释器不仅要搜索当前最内层的环境，还必须搜索所以外围的环境。
+这段代码中，`global`在外部全局环境中，`local`则在块环境中定义。在执行`print`语句时，这两个变量都在作用域内。为了找到它们，解释器不仅要搜索当前最内层的环境，还必须搜索所有外围的环境。
 
 我们通过将环境链接在一起来实现这一点。每个环境都有一个对直接外围作用域的环境的引用。当我们查找一个变量时，我们从最内层开始遍历环境链直到找到该变量。从内部作用域开始，就是我们使局部变量遮蔽外部变量的方式。
 
 ![Environments for each scope, linked together.](8.表达式和状态/chaining.png)
 
-在我们添加块语法之前，我们要强化Environment类对这种嵌套的支持。首先，我们在每个环境中添加一个对其外围环境的引用。
+在我们添加块语法之前，我们要强化`Environment`类对这种嵌套的支持。首先，我们在每个环境中添加一个对其外围环境的引用。
 
-*<u>lox/Environment.java，在 Environment类中添加：</u>*
+> 在`Environment.java`文件中，在`Environment`类中添加
 
 ```java
-class Environment {
+public class Environment {
   // 新增部分开始
-  final Environment enclosing;
+  public final Environment enclosing;
   // 新增部分结束
   private final Map<String, Object> values = new HashMap<>();
 ```
 
 这个字段需要初始化，所以我们添加两个构造函数。
 
-*<u>lox/Environment.java，在 Environment类中添加：</u>*
+> 在`Environment.java`文件中，在`Environment`类中添加
 
 ```java
-  Environment() {
-    enclosing = null;
+  public Environment() {
+      enclosing = null;
   }
 
-  Environment(Environment enclosing) {
-    this.enclosing = enclosing;
+  public Environment(Environment enclosing) {
+      this.enclosing = enclosing;
   }
 ```
 
@@ -3595,7 +3590,7 @@ class Environment {
 
 我们不必修改`define()`方法——因为新变量总是在当前最内层的作用域中声明。但是变量的查找和赋值是结合已有的变量一起处理的，需要遍历环境链以找到它们。首先是查找操作：
 
-*<u>lox/Environment.java，在 get()方法中添加：</u>*
+> 在`Environment.java`文件中，在`get()`方法中添加
 
 ```java
       return values.get(name.lexeme);
@@ -3604,14 +3599,14 @@ class Environment {
     if (enclosing != null) return enclosing.get(name);
     // 新增部分结束
     throw new RuntimeError(name,
-        "Undefined variable '" + name.lexeme + "'.");
+        "未定义变量 '" + name.lexeme + "'。");
 ```
 
 如果当前环境中没有找到变量，就在外围环境中尝试。然后递归地重复该操作，最终会遍历完整个链路。如果我们到达了一个没有外围环境的环境，并且仍然没有找到这个变量，那我们就放弃，并且像之前一样报告一个错误。
 
 赋值也是如此。
 
-*<u>lox/Environment.java，在 assign()方法中添加：</u>*
+> 在`Environment.java`文件中，在`assign()`方法中添加
 
 ```java
       values.put(name.lexeme, value);
@@ -3640,33 +3635,39 @@ statement      = exprStmt
 block          = "{" declaration* "}" ;
 ```
 
-块是由花括号包围的一系列语句或声明(可能是空的)。块本身就是一条语句，可以出现在任何允许语句的地方。语法树节点如下所示。
+块是由花括号包围的一系列语句或声明（可能是空的）。块本身就是一条语句，可以出现在任何允许语句的地方。语法树节点如下所示。
 
-*<u>tool/GenerateAst.java，在 main()方法中添加：</u>*
+> 创建新文件`Block.java`
 
 ```java
-    defineAst(outputDir, "Stmt", Arrays.asList(
-      // 新增部分开始
-      "Block      : List<Stmt> statements",
-      // 新增部分结束
-      "Expression : Expr expression",
+package com.atguigu;
+
+import java.util.List;
+
+public class Block extends Stmt {
+    public final List<Stmt> statements;
+    
+    public Block(List<Stmt> statements) {
+        this.statements = statements;
+    }
+}
 ```
 
-它包含块中语句的列表。解析很简单。与其他语句一样，我们通过块的前缀标记(在本例中是`{`)来检测块的开始。在`statement()`方法中，我们添加代码：
+它包含块中语句的列表。解析很简单。与其他语句一样，我们通过块的前缀标记（在本例中是`{`）来检测块的开始。在`statement()`方法中，我们添加代码：
 
-*<u>lox/Parser.java，在 statement()方法中添加：</u>*
+> 在`Parser.java`文件中，在`statement()`方法中添加
 
 ```java
     if (match(PRINT)) return printStatement();
     // 新增部分开始
-    if (match(LEFT_BRACE)) return new Stmt.Block(block());
+    if (match(LEFT_BRACE)) return new Block(block());
     // 新增部分结束
     return expressionStatement();
 ```
 
 真正的工作都在这里进行：
 
-*<u>lox/Parser.java，在 expressionStatement()方法后添加：</u>*
+> 在`Parser.java`文件中，在`expressionStatement()`方法后添加
 
 ```java
   private List<Stmt> block() {
@@ -3676,20 +3677,19 @@ block          = "{" declaration* "}" ;
       statements.add(declaration());
     }
 
-    consume(RIGHT_BRACE, "Expect '}' after block.");
+    consume(RIGHT_BRACE, "块必须以右花括号结尾。");
     return statements;
   }
 ```
 
 我们先创建一个空列表，然后解析语句并将其放入列表中，直至遇到块的结尾（由`}`符号标识）。注意，该循环还有一个明确的`isAtEnd()`检查。我们必须小心避免无限循环，即使在解析无效代码时也是如此。如果用户忘记了结尾的`}`，解析器需要保证不能被阻塞。
 
-语法到此为止。对于语义，我们要在Interpreter中添加另一个访问方法。
+语法到此为止。对于语义，我们要在`Interpreter`中添加另一个访问方法。
 
-*<u>lox/Interpreter.java，在 execute()方法后添加：</u>*
+> 在`Interpreter.java`文件中，在`execute()`方法后添加
 
 ```java
-  @Override
-  public Void visitBlockStmt(Stmt.Block stmt) {
+  public Void executeBlockStmt(Block stmt) {
     executeBlock(stmt.statements, new Environment(environment));
     return null;
   }
@@ -3697,10 +3697,10 @@ block          = "{" declaration* "}" ;
 
 要执行一个块，我们先为该块作用域创建一个新的环境，然后将其传入下面这个方法：
 
-*<u>lox/Interpreter.java，在execute()方法后添加：</u>*
+> 在`Interpreter.java`文件中，在`execute()`方法后添加
 
 ```java
-  void executeBlock(List<Stmt> statements,
+  public void executeBlock(List<Stmt> statements,
                     Environment environment) {
     Environment previous = this.environment;
     try {
@@ -3715,9 +3715,9 @@ block          = "{" declaration* "}" ;
   }
 ```
 
-这个新方法会在给定的环境上下文中执行一系列语句。在此之前，解释器中的 `environment` 字段总是指向相同的环境——全局环境。现在，这个字段会指向*当前*环境，也就是与要执行的代码的最内层作用域相对应的环境。
+这个新方法会在给定的环境上下文中执行一系列语句。在此之前，解释器中的 `environment` 字段总是指向相同的环境—全局环境。现在，这个字段会指向 **当前** 环境，也就是与要执行的代码的最内层作用域相对应的环境。
 
-为了在给定作用域内执行代码，该方法会先更新解释器的 `environment` 字段，执行所有的语句，然后恢复之前的环境。基于Java中一贯的优良传统，它使用`finally`子句来恢复先前的环境。这样一来，即使抛出了异常，环境也会被恢复。
+为了在给定作用域内执行代码，该方法会先更新解释器的 `environment` 字段，执行所有的语句，然后恢复之前的环境。基于$Java$中一贯的优良传统，它使用`finally`子句来恢复先前的环境。这样一来，即使抛出了异常，环境也会被恢复。
 
 出乎意料的是，这就是我们为了完全支持局部变量、嵌套和遮蔽所需要做的全部事情。试运行下面的代码：
 
@@ -3730,68 +3730,46 @@ var c = "global c";
   var b = "outer b";
   {
     var a = "inner a";
-    print a;
-    print b;
-    print c;
+    print(a);
+    print(b);
+    print(c);
   }
-  print a;
-  print b;
-  print c;
+  print(a);
+  print(b);
+  print(c);
 }
-print a;
-print b;
-print c;
+print(a);
+print(b);
+print(c);
 ```
 
-我们的小解释器现在可以记住东西了，我们举例全功能编程语言又近了一步。
+我们的小解释器现在可以记住东西了，我们距离全功能编程语言又近了一步。
 
 # $7$ 控制流
 
-现在，我们的解释器只不过是一个计算器而已。一个$Atguigu$程序在结束之前只能做固定的工作量。要想让它的运行时间延长一倍，你就必须让源代码的长度增加一倍。我们即将解决这个问题。在本章中，我们的解释器向编程语言大联盟迈出了一大步：图灵完备性。
+现在，我们的解释器只不过是一个计算器而已。一个$Atguigu$程序在结束之前只能做固定的工作量。要想让它的运行时间延长一倍，你就必须让源代码的长度增加一倍。我们即将解决这个问题。
 
-## $7.1$ 图灵机（简介）
-
-在上世纪初，数学家们陷入了一系列令人困惑的悖论之中，导致他们对自己工作所依赖的基础的稳定性产生怀疑。为了解决这一危机，他们又回到了原点。他们希望从少量的公理、逻辑和集合理论开始，在一个不透水的地基上重建数学。
-
-他们想要严格地回答这样的问题：“所有真实的陈述都可以被证明吗？”，“我们可以计算我们能定义的所有函数吗？”，甚至是更一般性的问题，“当我们声称一个函数是'可计算的'时，代表什么意思？”
-
-他们认为前两个问题的答案应该是“是”，剩下的就是去证明它。但事实证明这两个问题的答案都是“否”。而且令人惊讶的是，这两个问题是深深地交织在一起的。这是数学的一个迷人的角落，它触及了关于大脑能够做什么和宇宙如何运作的基本问题。我在这里说不清楚。
-
-我想指出的是，在证明前两个问题的答案是 "否 "的过程中，艾伦·图灵和阿隆佐·邱奇为最后一个问题设计了一个精确的答案，即定义了什么样的函数是可计算的。他们各自设计了一个具有最小机械集的微型系统，该系统仍然强大到足以计算一个超大类函数中的任何一个。
-
-这些现在被认为是“可计算函数”。图灵的系统被称为**图灵机**，邱奇的系统是**lambda演算**。这两种方法仍然被广泛用作计算模型的基础，事实上，许多现代函数式编程语言的核心都是lambda演算。
-
-![A Turing machine.](9.控制流/turing-machine.png)
-
-图灵机的知名度更高——目前还没有关于阿隆佐·邱奇的好莱坞电影，但这两种形式[在能力上是等价的](https://en.wikipedia.org/wiki/Church%E2%80%93Turing_thesis)。事实上，任何具有最低表达能力的编程语言都足以计算任何可计算函数。
-
-你可以用自己的语言为图灵机编写一个模拟器来证明这一点。由于图灵证明了他的机器可以计算任何可计算函数，推而广之，这意味着你的语言也可以。你所需要做的就是把函数翻译成图灵机，然后在你的模拟器上运行它。
-
-如果你的语言有足够的表达能力来做到这一点，它就被认为是**图灵完备**的。图灵机非常简单，所以它不需要太多的能力。您基本上只需要算术、一点控制流以及分配和使用(理论上)任意数量内存的能力。我们已经具备了第一个条件。在本章结束时，我们将具备第二个条件。
-
-## $7.2$ 条件执行
+## $7.1$ 条件执行
 
 说完了历史，现在让我们把语言优化一下。我们大致可以把控制流分为两类：
 
-- **条件**或**分支控制流**是用来不执行某些代码的。意思是，你可以把它看作是跳过了代码的一个区域。
+- **条件**或**分支控制流**是用来不执行某些代码的。意思是，我们可以把它看作是跳过了代码的一个区域。
 
 - **循环控制流**是用于多次执行一块代码的。它会 **向回** 跳转，从而能再次执行某些代码。用户通常不需要无限循环，所以一般也会有一些条件逻辑用于判断何时停止循环。
 
-分支更简单一些，所以我们先从分支开始实现。C衍生语言中包含两个主要的条件执行功能，即`if`语句和“条件”运算符（`?:`）。`if`语句使你可以按条件执行语句，而条件运算符使你可以按条件执行表达式。
-
-为了简单起见，Lox没有条件运算符，所以让我们直接开始`if`语句吧。我们的语句语法需要一个新的生成式。
+让我们开始实现`if`语句。我们的语句语法需要一个新的生成式。
 
 ```javascript
-statement      → exprStmt
+statement      = exprStmt
                | ifStmt
                | printStmt
                | block ;
 
-ifStmt         → "if" "(" expression ")" statement
+ifStmt         = "if" "(" expression ")" statement
                ( "else" statement )? ;
 ```
 
-if语句有一个表达式作为条件，然后是一个在条件为真时要执行的语句。另外，它还可以有一个`else`关键字和条件为假时要执行的语句。语法树节点中对语法的这三部分都有对应的字段。
+`if`语句有一个表达式作为条件，然后是一个在条件为真时要执行的语句。另外，它还可以有一个`else`关键字和条件为假时要执行的语句。语法树节点中对语法的这三部分都有对应的字段。
 
 *<u>tool/GenerateAst.java，在 main()方法中添加：</u>*
 
@@ -3816,15 +3794,15 @@ if语句有一个表达式作为条件，然后是一个在条件为真时要执
     if (match(PRINT)) return printStatement();
 ```
 
-如果发现了`if`关键字，就调用下面的新方法解析其余部分[^5]：
+如果发现了`if`关键字，就调用下面的新方法解析其余部分：
 
 > 在`Parser.java`文件中，在`statement()`方法后添加
 
 ```java
   private Stmt ifStatement() {
-    consume(LEFT_PAREN, "Expect '(' after 'if'.");
+    consume(LEFT_PAREN, "if后面需要有左括号。");
     Expr condition = expression();
-    consume(RIGHT_PAREN, "Expect ')' after if condition."); 
+    consume(RIGHT_PAREN, "条件表达式后面需要有右括号。"); 
 
     Stmt thenBranch = statement();
     Stmt elseBranch = null;
@@ -3832,7 +3810,7 @@ if语句有一个表达式作为条件，然后是一个在条件为真时要执
       elseBranch = statement();
     }
 
-    return new Stmt.If(condition, thenBranch, elseBranch);
+    return new If(condition, thenBranch, elseBranch);
   }
 ```
 
@@ -3856,17 +3834,16 @@ if (first) if (second) whenTrue(); else whenFalse();
 
 也可以定义一个上下文无关的语法来直接避免歧义，但是需要将大部分语句规则拆分成对，一个是允许带有`else`的`if`语句，另一个不允许。这很烦人。
 
-相反，大多数语言和解析器都以一种特殊的方式避免了这个问题。不管他们用什么方法来解决这个问题，他们总是选择同样的解释——`else`与前面最近的`if`绑定在一起。
+相反，大多数语言和解析器都以一种特殊的方式避免了这个问题。不管他们用什么方法来解决这个问题，他们总是选择同样的解释—`else`与前面最近的`if`绑定在一起。
 
 我们的解析器已经很方便地做到了这一点。因为 `ifStatement()`在返回之前会继续寻找一个`else`子句，连续嵌套的最内层调用在返回外部的`if`语句之前，会先为自己声明`else`语句。
 
 语法就绪了，我们可以开始解释了。
 
-*<u>lox/Interpreter.java，在 visitExpressionStmt()后添加：</u>*
+> 在`Interpreter.java`文件中，在`evaluateExpressionStmt()`后添加
 
 ```java
-  @Override
-  public Void visitIfStmt(Stmt.If stmt) {
+  public Void evaluateIfStmt(Stmt.If stmt) {
     if (isTruthy(evaluate(stmt.condition))) {
       execute(stmt.thenBranch);
     } else if (stmt.elseBranch != null) {
@@ -3876,15 +3853,15 @@ if (first) if (second) whenTrue(); else whenFalse();
   }
 ```
 
-解释器实现就是对相同的Java代码的简单包装。它首先对条件表达式进行求值。如果为真，则执行`then`分支。否则，如果有存在`else`分支，就执行该分支。
+解释器实现就是对相同的$Java$代码的简单包装。它首先对条件表达式进行求值。如果为真，则执行`then`分支。否则，如果有存在`else`分支，就执行该分支。
 
-如果你把这段代码与解释器中我们已实现的处理其它语法的代码进行比较，会发现控制流中特殊的地方就在于Java的`if`语句。其它大多数语法树总是会对子树求值，但是这里，我们可能会不执行`then`语句或`else`语句。如果其中任何一个语句有副作用，那么选择不执行某条语句就是用户可见的。
+如果我们把这段代码与解释器中我们已实现的处理其它语法的代码进行比较，会发现控制流中特殊的地方就在于$Java$的`if`语句。其它大多数语法树总是会对子树求值，但是这里，我们可能会不执行`then`语句或`else`语句。如果其中任何一个语句有副作用，那么选择不执行某条语句就是用户可见的。
 
-## $7.3$ 逻辑操作符
+## $7.2$ 逻辑运算符
 
-由于我们没有条件运算符，你可能认为我们已经完成分支开发了，但其实还没有。虽然没有三元运算符，但是还有两个其它操作符在技术上是控制流结构——逻辑运算符`and`和`or`。
+由于我们没有条件运算符，你可能认为我们已经完成分支开发了，但其实还没有。因为还有两个其它运算符在技术上是控制流结构—逻辑运算符`and`和`or`。
 
-它们与其它二进制运算符不同，是因为它们会短路。如果在计算左操作数之后，我们已经确切知道逻辑表达式的结果，那么就不再计算右操作数。例如：
+它们与其它二元运算符不同，是因为它们会短路。如果在计算左操作数之后，我们已经确切知道逻辑表达式的结果，那么就不再计算右操作数。例如：
 
 ```java
 false and sideEffect();
@@ -3892,19 +3869,19 @@ false and sideEffect();
 
 对于一个`and`表达式来说，两个操作数都必须是真，才能得到结果为真。我们只要看到左侧的`false`操作数，就知道结果不会是真，也就不需要对`sideEffect()`求值，会直接跳过它。
 
-这就是为什么我们没有在实现其它二元运算符的时候一起实现逻辑运算符。现在我们已经准备好了。这两个新的运算符在优先级表中的位置很低，类似于C语言中的`||`和`&&`，它们都有各自的优先级，`or`低于`and`。我们把这两个运算符插入`assignment` 和 `equality`之间。
+这就是为什么我们没有在实现其它二元运算符的时候一起实现逻辑运算符。现在我们已经准备好了。这两个新的运算符在优先级表中的位置很低，类似于$JS$语言中的`||`和`&&`，它们都有各自的优先级，`or`低于`and`。我们把这两个运算符插入`assignment` 和 `equality`之间。
 
 ```javascript
-expression     → assignment ;
-assignment     → IDENTIFIER "=" assignment
+expression     = assignment ;
+assignment     = IDENTIFIER "=" assignment
                | logic_or ;
-logic_or       → logic_and ( "or" logic_and )* ;
-logic_and      → equality ( "and" equality )* ;
+logic_or       = logic_and ( "or" logic_and )* ;
+logic_and      = equality ( "and" equality )* ;
 ```
 
 `assignment` 现在不是落到 `equality`，而是继续进入`logic_or`。两个新规则，`logic_or` 和 `logic_and`，与其它二元运算符类似。然后`logic_and`会调用`equality`计算其操作数，然后我们就链入了表达式规则的其它部分。
 
-对于这两个新表达式，我们可以重用Expr.Binary类，因为他们具有相同的字段。但是这样的话，`visitBinaryExpr()` 方法中必须检查运算符是否是逻辑运算符，并且要使用不同的代码处理短路逻辑。我认为更整洁的方法是为这些运算符定义一个新类，这样它们就有了自己的`visit`方法。
+对于这两个新表达式，我们可以重用`Binary`类，因为他们具有相同的字段。但是这样的话，`evaluateBinaryExpr()` 方法中必须检查运算符是否是逻辑运算符，并且要使用不同的代码处理短路逻辑。我认为更整洁的方法是为这些运算符定义一个新类，这样它们就有了自己的求值方法。
 
 *<u>tool/GenerateAst.java，在main()方法中添加：</u>*
 
@@ -3939,7 +3916,7 @@ logic_and      → equality ( "and" equality )* ;
     while (match(OR)) {
       Token operator = previous();
       Expr right = and();
-      expr = new Expr.Logical(expr, operator, right);
+      expr = new Logical(expr, operator, right);
     }
 
     return expr;
@@ -3957,7 +3934,7 @@ logic_and      → equality ( "and" equality )* ;
     while (match(AND)) {
       Token operator = previous();
       Expr right = equality();
-      expr = new Expr.Logical(expr, operator, right);
+      expr = new Logical(expr, operator, right);
     }
 
     return expr;
@@ -3966,11 +3943,10 @@ logic_and      → equality ( "and" equality )* ;
 
 这里会调用 `equality()` 计算操作数，这样一来，表达式解析器又重新绑定到了一起。我们已经准备好进行解释了。
 
-*<u>lox/Interpreter.java，在 visitLiteralExpr()方法后添加：</u>*
+> 在`Interpreter.java`文件中，在`evaluateLiteralExpr()`方法后添加
 
 ```java
-  @Override
-  public Object visitLogicalExpr(Expr.Logical expr) {
+  public Object evaluateLogicalExpr(Expr.Logical expr) {
     Object left = evaluate(expr.left);
 
     if (expr.operator.type == TokenType.OR) {
@@ -3983,22 +3959,22 @@ logic_and      → equality ( "and" equality )* ;
   }
 ```
 
-如果你把这个方法与前面章节的`visitBinaryExpr()`方法相比较，就可以看出其中的区别。这里，我们先计算左操作数。然后我们查看结果值，判断是否可以短路。当且仅当不能短路时，我们才计算右侧的操作数。
+如果我们把这个方法与前面章节的`evaluateBinaryExpr()`方法相比较，就可以看出其中的区别。这里，我们先计算左操作数。然后我们查看结果值，判断是否可以短路。当且仅当不能短路时，我们才计算右侧的操作数。
 
-另一个有趣的部分是决定返回什么实际值。由于Lox是动态类型的，我们允许任何类型的操作数，并使用真实性来确定每个操作数代表什么。我们对结果采用类似的推理。逻辑运算符并不承诺会真正返回`true`或`false`，而只是保证它将返回一个具有适当真实性的值。
+另一个有趣的部分是决定返回什么实际值。由于$Atguigu$语言是动态类型的，我们允许任何类型的操作数，并使用真实性来确定每个操作数代表什么。我们对结果采用类似的推理。逻辑运算符并不承诺会真正返回`true`或`false`，而只是保证它将返回一个具有适当真实性的值。
 
-幸运的是，我们手边就有具有适当真实性的值——即操作数本身的结果，所以我们可以直接使用它们。如：
+幸运的是，我们手边就有具有适当真实性的值—即操作数本身的结果，所以我们可以直接使用它们。如：
 
 ```javascript
-print "hi" or 2; // "hi".
-print nil or "yes"; // "yes".
+print("hi" or 2); // "hi".
+print(nil or "yes"); // "yes".
 ```
 
-在第一行，`“hi”`是真的，所以`or`短路并返回它。在第二行，`nil`是假的，因此它计算并返回第二个操作数`“yes”`。
+在第一行，`"hi"`是真的，所以`or`短路并返回它。在第二行，`nil`是假的，因此它计算并返回第二个操作数`"yes"`。
 
-这样就完成了Lox中的所有分支原语，我们准备实现循环吧。
+这样就完成了$Atguigu$中的所有分支原语，我们准备实现循环吧。
 
-## $7.4$ $while$循环
+## $7.3$ $while$循环
 
 $Atguigu$有两种类型的循环控制流语句，分别是`while`和`for`。`while`循环更简单一点，我们先从它开始。
 
@@ -4012,7 +3988,7 @@ statement      = exprStmt
 whileStmt      = "while" "(" expression ")" statement ;
 ```
 
-我们在`statement`规则中添加一个子句，指向while对应的新规则`whileStmt`。该规则接收一个`while`关键字，后跟一个带括号的条件表达式，然后是循环体对应的语句。新语法规则需要定义新的语法树节点。
+我们在`statement`规则中添加一个子句，指向`while`对应的新规则`whileStmt`。该规则接收一个`while`关键字，后跟一个带括号的条件表达式，然后是循环体对应的语句。新语法规则需要定义新的语法树节点。
 
 *<u>tool/GenerateAst.java,在 main()方法中新增，前一行后添加“,”</u>* 
 
@@ -4036,7 +4012,7 @@ whileStmt      = "while" "(" expression ")" statement ;
     // 新增部分开始
     if (match(WHILE)) return whileStatement();
     // 新增部分结束
-    if (match(LEFT_BRACE)) return new Stmt.Block(block());
+    if (match(LEFT_BRACE)) return new Block(block());
 ```
 
 实际的工作委托给下面的方法：
@@ -4050,17 +4026,16 @@ whileStmt      = "while" "(" expression ")" statement ;
     consume(RIGHT_PAREN, "Expect ')' after condition.");
     Stmt body = statement();
 
-    return new Stmt.While(condition, body);
+    return new While(condition, body);
   }
 ```
 
-语法非常简单，这里将其直接翻译为Java。说到直接翻译成Java，下面是我们执行新语法的方式：
+语法非常简单，这里将其直接翻译为$Java$。下面是我们执行新语法的方式：
 
-*<u>lox/Interpreter.java，在 visitVarStmt()方法后添加：</u>*
+> 在`Interpreter.java`，在`executeVarStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitWhileStmt(Stmt.While stmt) {
+  public Void executeWhileStmt(Stmt.While stmt) {
     while (isTruthy(evaluate(stmt.condition))) {
       execute(stmt.body);
     }
@@ -4068,11 +4043,11 @@ whileStmt      = "while" "(" expression ")" statement ;
   }
 ```
 
-和`if`的访问方法一样，这里的访问方法使用了相应的Java特性。这个方法并不复杂，但它使Lox变得更加强大。我们终于可以编写一个运行时间不受源代码长度严格限制的程序了。
+和`if`的访问方法一样，这里的执行方法使用了相应的$Java$特性。
 
-## $7.5$ $for$循环
+## $7.4$ $for$循环
 
-我们已经到了最后一个控制流结构，即$JS$语言风格`for`循环。我可能不需要提醒你，但还是要说它看起来是这样的： 
+我们已经到了最后一个控制流结构，即$JS$语言风格`for`循环。`for`循环的语法是这样的。
 
 ```java
 for (var i = 0; i < 10; i = i + 1) print(i);
@@ -4081,31 +4056,31 @@ for (var i = 0; i < 10; i = i + 1) print(i);
 在语法中，是这样的：
 
 ```javascript
-statement      → exprStmt
+statement      = exprStmt
                | forStmt
                | ifStmt
                | printStmt
                | whileStmt
                | block ;
 
-forStmt        → "for" "(" ( varDecl | exprStmt | ";" )
+forStmt        = "for" "(" ( varDecl | exprStmt | ";" )
                  expression? ";"
                  expression? ")" statement ;
 ```
 
 在括号内，有三个由分号分隔的子语句：
 
-1. 第一个子句是*初始化式*。它只会在任何其它操作之前执行一次。它通常是一个表达式，但是为了便利，我们也允许一个变量声明。在这种情况下，变量的作用域就是`for`循环的其它部分——其余两个子式和循环体。
+1. 第一个子句是 **初始化式** 。它只会在任何其它操作之前执行一次。它通常是一个表达式，但是为了便利，我们也允许一个变量声明。在这种情况下，变量的作用域就是`for`循环的其它部分—其余两个子式和循环体。
 
 2. 接下来是*条件表达式*。与`while`循环一样，这个表达式控制了何时退出循环。它会在每次循环开始之前执行一次（包括第一次）。如果结果是真，就执行循环体；否则，就结束循环。
 
-3. 最后一个子句是*增量式*。它是一个任意的表达式，会在每次循环结束的时候做一些工作。因为表达式的结果会被丢弃，所以它必须有副作用才能有用。在实践中，它通常会对变量进行递增。
+3. 最后一个子句是 **增量表达式** 。它是一个任意的表达式，会在每次循环结束的时候做一些工作。因为表达式的结果会被丢弃，所以它必须有副作用才能有用。在实践中，它通常会对变量进行递增。
 
 这些子语句都可以忽略。在右括号之后是一个语句作为循环体，通常是一个代码块。
 
-### $7.5.1$ 语法脱糖
+### $7.4.1$ 去掉语法糖
 
-这里包含了很多配件，但是请注意，它所做的任何事情中，没有一件是无法用已有的语句实现的。如果`for`循环不支持初始化子句，你可以在`for`语句之前加一条初始化表达式。如果没有增量子语句，你可以直接把增量表达式放在循环体的最后。
+这里包含了很多配件，但是请注意，它所做的任何事情中，没有一件是无法用已有的语句实现的。如果`for`循环不支持初始化子句，可以在`for`语句之前加一条初始化表达式。如果没有增量子语句，可以直接把增量表达式放在循环体的最后。
 
 换句话说，$Atguigu$ **不需要** `for`循环，它们只是让一些常见的代码模式更容易编写。这类功能被称为**语法糖**。例如，前面的`for`循环可以改写成这样：
 
@@ -4113,13 +4088,13 @@ forStmt        → "for" "(" ( varDecl | exprStmt | ";" )
 {
   var i = 0;
   while (i < 10) {
-    print i;
+    print(i);
     i = i + 1;
   }
 }
 ```
 
-虽然这个脚本不太容易看懂，但这个脚本与之前那个语义完全相同。像Lox中的`for`循环这样的语法糖特性可以使语言编写起来更加愉快和高效。但是，特别是在复杂的语言实现中，每一个需要后端支持和优化的语言特性都是代价昂贵的。
+虽然这个脚本不太容易看懂，但这个脚本与之前那个语义完全相同。像$Atguigu$语言中的`for`循环这样的语法糖特性可以使语言编写起来更加愉快和高效。但是，特别是在复杂的语言实现中，每一个需要后端支持和优化的语言特性都是代价昂贵的。
 
 我们可以通过**脱糖**来吃这个蛋糕。这个有趣的词描述了这样一个过程：前端接收使用了语法糖的代码，并将其转换成后端知道如何执行的更原始的形式。
 
@@ -4178,7 +4153,7 @@ import java.util.List;
   }
 ```
 
-如果`(`后面的标记是分号，name初始化式就被省略了。否则，我们就检查`var`关键字，看它是否是一个变量声明。如果这两者都不符合，那么它一定是一个表达式。我们对其进行解析，并将其封装在一个表达式语句中，这样初始化器就必定属于Stmt类型。
+如果`(`后面的标记是分号，`name`初始化式就被省略了。否则，我们就检查`var`关键字，看它是否是一个变量声明。如果这两者都不符合，那么它一定是一个表达式。我们对其进行解析，并将其封装在一个表达式语句中，这样初始化器就必定属于`Stmt`类型。
 
 接下来是条件表达式。
 
@@ -4227,7 +4202,7 @@ import java.util.List;
   }
 ```
 
-我们已经解析了`for`循环的所有部分，得到的AST节点也存储在一些Java本地变量中。这里也是脱糖开始的地方。我们利用这些变量来合成表示`for`循环语义的语法树节点，就像前面展示的手工脱糖的例子一样。
+我们已经解析了`for`循环的所有部分，得到的$AST$节点也存储在一些$Java$本地变量中。这里也是脱糖开始的地方。我们利用这些变量来合成表示`for`循环语义的语法树节点，就像前面展示的手工脱糖的例子一样。
 
 如果我们向后向前处理，代码会更简单一些，所以我们从增量子句开始。
 
@@ -4237,10 +4212,10 @@ import java.util.List;
     Stmt body = statement();
     // 新增部分开始
     if (increment != null) {
-      body = new Stmt.Block(
+      body = new Block(
           Arrays.asList(
               body,
-              new Stmt.Expression(increment)));
+              new Expression(increment)));
     }
     // 新增部分结束
     return body;
@@ -4253,8 +4228,8 @@ import java.util.List;
 ```java
     }
     // 新增部分开始
-    if (condition == null) condition = new Expr.Literal(true);
-    body = new Stmt.While(condition, body);
+    if (condition == null) condition = new Literal(true);
+    body = new While(condition, body);
     // 新增部分结束
     return body;
 ```
@@ -4264,10 +4239,10 @@ import java.util.List;
 > 在`Parser.java`文件中，在`forStatement()`方法中新增
 
 ```java
-    body = new Stmt.While(condition, body);
+    body = new While(condition, body);
     // 新增部分开始
     if (initializer != null) {
-      body = new Stmt.Block(Arrays.asList(initializer, body));
+      body = new Block(Arrays.asList(initializer, body));
     }
     // 新增部分结束
     return body;
@@ -4275,9 +4250,9 @@ import java.util.List;
 
 最后，如果有初始化式，它会在整个循环之前运行一次。我们的做法是，再次用代码块来替换整个语句，该代码块中首先运行一个初始化式，然后执行循环。
 
-就是这样。我们的解释器现在已经支持了C语言风格的`for`循环，而且我们根本不需要修改解释器类。因为我们通过脱糖将其转换为了解释器已经知道如何访问的节点，所以无需做其它的工作。
+就是这样。我们的解释器现在已经支持了$JS$语言风格的`for`循环，而且我们根本不需要修改解释器类。因为我们通过脱糖将其转换为了解释器已经知道如何访问的节点，所以无需做其它的工作。
 
-最后，Lox已强大到足以娱乐我们，至少几分钟。下面是一个打印斐波那契数列前21个元素的小程序：
+下面是一个打印斐波那契数列前$21$个元素的小程序：
 
 ```javascript
 var a = 0;
@@ -4292,42 +4267,42 @@ for (var b = 1; a < 10000; b = temp + b) {
 
 # $8$ 函数
 
-这也是人类思维的运作方式——将旧的想法复合成为新结构，成为新的想法，而这些想法本身又可以被用于复合，循环往复，无休无止，越来越远离每一种语言赖以生存的基本的土壤。
+这也是人类思维的运作方式—将旧的想法复合成为新结构，成为新的想法，而这些想法本身又可以被用于复合，循环往复，无休无止，越来越远离每一种语言赖以生存的基本的土壤。
 
-这一章标志着很多艰苦工作的一个高潮。在前面的章节中，各自添加了一些有用的功能，但是每一章也都提供了一个拼图的碎片。我们整理这些碎片——表达式、语句、变量、控制流和词法作用域，再加上其它功能，并把他们组合起来，以支持真正的用户定义函数和函数调用。
+这一章标志着很多艰苦工作的一个高潮。在前面的章节中，各自添加了一些有用的功能，但是每一章也都提供了一个拼图的碎片。我们整理这些碎片—表达式、语句、变量、控制流和词法作用域，再加上其它功能，并把他们组合起来，以支持真正的用户定义函数和函数调用。
 
 ## $8.1$ 函数调用
 
-你肯定熟悉C语言风格的函数调用语法，但其语法可能比你意识到的更微妙。调用通常是指向命名的函数，例如：
+我们已经很熟悉$JS$语言风格的函数调用语法，但其语法可能比我们意识到的更微妙。调用通常是指向命名的函数，例如：
 
-```java
+```js
 average(1, 2);
 ```
 
-但是被调用函数的名称实际上并不是调用语法的一部分。被调用者（ **callee**）可以是计算结果为一个函数的任何表达式。(好吧，它必须是一个非常高优先级的表达式，但是圆括号可以解决这个问题。)例如：
+但是被调用函数的名称实际上并不是调用语法的一部分。被调用者（$$callee$$）可以是计算结果为一个函数的任何表达式。（好吧，它必须是一个非常高优先级的表达式，但是圆括号可以解决这个问题。）例如：
 
 ```java
 getCallback()();
 ```
 
-这里有两个函数调用。第一对括号将`getCallback`作为其被调用者。但是第二对括号将整个`getCallback()` 表达式作为其被调用者。表达式后面的小括号表示函数调用，你可以把调用看作是一种以`(`开头的后缀运算符。
+这里有两个函数调用。第一对括号将`getCallback`作为其被调用者。但是第二对括号将整个`getCallback()` 表达式作为其被调用者。表达式后面的小括号表示函数调用，我们可以把调用看作是一种以`(`开头的后缀运算符。
 
 这个“运算符”比其它运算符（包括一元运算符）有更高的优先级。所以我们通过让`unary`规则跳转到新的`call`规则，将其添加到语法中。
 
 ```javascript
-unary          → ( "!" | "-" ) unary | call ;
-call           → primary ( "(" arguments? ")" )* ;
+unary          = ( "!" | "-" ) unary | call ;
+call           = primary ( "(" arguments? ")" )* ;
 ```
 
-该规则匹配一个基本表达式，后面跟着0个或多个函数调用。如果没有括号，则解析一个简单的基本表达式。否则，每一对圆括号都表示一个函数调用，圆括号内有一个可选的参数列表。参数列表语法是：
+该规则匹配一个基本表达式，后面跟着$0$个或多个函数调用。如果没有括号，则解析一个简单的基本表达式。否则，每一对圆括号都表示一个函数调用，圆括号内有一个可选的参数列表。参数列表语法是：
 
 ```javascript
-arguments      → expression ( "," expression )* ;
+arguments      = expression ( "," expression )* ;
 ```
 
-这个规则要求至少有一个参数表达式，后面可以跟0个或多个其它表达式，每两个表达式之间用`,`分隔。为了处理无参调用，`call`规则本身认为整个`arguments`生成式是可选的。
+这个规则要求至少有一个参数表达式，后面可以跟$0$个或多个其它表达式，每两个表达式之间用`,`分隔。为了处理无参调用，`call`规则本身认为整个`arguments`生成式是可选的。
 
-我承认，对于极其常见的 "零或多个逗号分隔的事物 "模式来说，这在语法上似乎比你想象的更难处理。有一些复杂的元语法可以更好地处理这个问题，但在我们的BNF和我见过的许多语言规范中，它就是如此的麻烦。
+我承认，对于极其常见的 "零或多个逗号分隔的事物 "模式来说，这在语法上似乎比想象的更难处理。有一些复杂的元语法可以更好地处理这个问题，但在我们的$EBNF$和我见过的许多语言规范中，它就是如此的麻烦。
 
 在我们的语法树生成器中，我们添加一个新节点。
 
@@ -4348,7 +4323,7 @@ arguments      → expression ( "," expression )* ;
 > 在`Parser.java`文件中，在`unary()`方法中替换一行
 
 ```java
-      return new Expr.Unary(operator, right);
+      return new Unary(operator, right);
     }
     // 替换部分开始
     return call();
@@ -4376,7 +4351,7 @@ arguments      → expression ( "," expression )* ;
   }
 ```
 
-这里的代码与语法规则并非完全一致。为了保持代码简洁，我调整了一些东西——这是我们手写解析器的优点之一。但它与我们解析中缀运算符的方式类似。首先，我们解析一个基本表达式，即调用的左操作数。然后，每次看到`(`，我们就调用`finishCall()`解析调用表达式，并使用之前解析出的表达式作为被调用者。返回的表达式成为新的`expr`，我们循环检查其结果是否被调用。
+这里的代码与语法规则并非完全一致。为了保持代码简洁，我调整了一些东西—这是我们手写解析器的优点之一。但它与我们解析中缀运算符的方式类似。首先，我们解析一个基本表达式，即调用的左操作数。然后，每次看到`(`，我们就调用`finishCall()`解析调用表达式，并使用之前解析出的表达式作为被调用者。返回的表达式成为新的`expr`，我们循环检查其结果是否被调用。
 
 解析参数列表的代码在下面的工具方法中：
 
@@ -4394,52 +4369,31 @@ arguments      → expression ( "," expression )* ;
     Token paren = consume(RIGHT_PAREN,
                           "Expect ')' after arguments.");
 
-    return new Expr.Call(callee, paren, arguments);
+    return new Call(callee, paren, arguments);
   }
 ```
 
 这或多或少是`arguments` 语法规则翻译成代码的结果，除了我们这里还处理了无参情况。我们首先判断下一个标记是否`)`来检查这种情况。如果是，我们就不会尝试解析任何参数。
 
-如果不是，我们就解析一个表达式，然后寻找逗号（表明后面还有一个参数）。只要我们在表达式后面发现逗号，就会继续解析表达式。当我们找不到逗号时，说明参数列表已经结束，我们继续消费预期的右括号。最终，我们将被调用者和这些参数封装成一个函数调用的AST节点。
+如果不是，我们就解析一个表达式，然后寻找逗号（表明后面还有一个参数）。只要我们在表达式后面发现逗号，就会继续解析表达式。当我们找不到逗号时，说明参数列表已经结束，我们继续消费预期的右括号。最终，我们将被调用者和这些参数封装成一个函数调用的$AST$节点。
 
-### $8.1.1$ 最大参数数量
-
-现在，我们解析参数的循环是没有边界的。如果你想调用一个函数并向其传递一百万个参数，解析器不会有任何问题。我们要对此进行限制吗？
-
-其它语言采用了不同的策略。C语言标准要求在符合标准的实现中，一个函数至少要支持127个参数，但是没有指定任何上限。Java规范规定一个方法可以接受不超过255个参数。
-
-> 在`Parser.java`文件中，在`finishCall()`方法中添加
-
-```java
-      do {
-        // 新增部分开始
-        if (arguments.size() >= 255) {
-          error(peek(), "Can't have more than 255 arguments.");
-        }
-        // 新增部分结束
-        arguments.add(expression());
-```
-
-请注意，如果发现参数过多，这里的代码会*报告*一个错误，但是不会*抛出*该错误。抛出错误是进入恐慌模式的方法，如果解析器处于混乱状态，不知道自己在语法中处于什么位置，那这就是我们想要的。但是在这里，解析器仍然处于完全有效的状态，只是发现了太多的参数。所以它会报告这个错误，并继续执行解析。
-
-### $8.1.2$ 解释函数调用
+### $8.1.1$ 解释执行函数调用
 
 我们还没有任何可以调用的函数，所以先实现函数调用似乎有点奇怪，但是这个问题我们后面再考虑。首先，我们的解释器需要引入一个新依赖。
 
-<u>lox/Interpreter.java</u>
+> 在`Interpreter.java`文件中
 
 ```java
 import java.util.ArrayList;
 import java.util.List;
 ```
 
-跟之前一样，解释工作从新的调用表达式节点对应的新的visit方法开始。
+跟之前一样，解释工作从新的调用表达式节点对应的新的求值方法开始。
 
-*<u>lox/Interpreter.java，在 visitBinaryExpr()方法后添加：</u>*
+> 在`Interpreter.java`文件中，在`evaluateBinaryExpr()`方法后添加
 
 ```java
-  @Override
-  public Object visitCallExpr(Expr.Call expr) {
+  public Object evaluateCallExpr(Call expr) {
     Object callee = evaluate(expr.callee);
 
     List<Object> arguments = new ArrayList<>();
@@ -4447,14 +4401,14 @@ import java.util.List;
       arguments.add(evaluate(argument));
     }
 
-    LoxCallable function = (LoxCallable)callee;
+    AtguiguCallable function = (AtguiguCallable) callee;
     return function.call(this, arguments);
   }
 ```
 
 首先，对被调用者的表达式求值。通常情况下，这个表达式只是一个标识符，可以通过它的名字来查找函数。但它可以是任何东西。然后，我们依次对每个参数表达式求值，并将结果值存储在一个列表中。
 
-一旦我们准备好被调用者和参数，剩下的就是执行函数调用。我们将被调用者转换为LoxCallable，然后对其调用`call()`方法来实现。任何可以像函数一样被调用的Lox对象的Java表示都要实现这个接口。这自然包括用户定义的函数，但也包括类对象，因为类会被 "调用 "来创建新的实例。稍后我们还将把它用于另一个目的。
+一旦我们准备好被调用者和参数，剩下的就是执行函数调用。我们将被调用者转换为`AtguiguCallable`，然后对其调用`call()`方法来实现。任何可以像函数一样被调用的$Atguigu$对象的$Java$表示都要实现这个接口。这包括用户定义的函数。
 
 这个新接口中没有太多内容。
 
@@ -4465,7 +4419,7 @@ package com.atguigu;
 
 import java.util.List;
 
-public interface LoxCallable {
+public interface AtguiguCallable {
   Object call(Interpreter interpreter, List<Object> arguments);
 }
 ```
@@ -4474,30 +4428,26 @@ public interface LoxCallable {
 
 ### $8.1.3$ 调用类型错误
 
-Before we get to implementing LoxCallable, we need to make the visit method a little more robust. It currently ignores a couple of failure modes that we can’t pretend won’t occur. First, what happens if the callee isn’t actually something you can call? What if you try to do this:
+在我们实现`AtguiguCallable`之前，我们需要使得求值方法更加健壮一些。例如，如果碰到下面的语句，应该发生什么？因为字符串不能当作函数被调用。
 
 ```
 "totally not a function"();
 ```
 
-Strings aren’t callable in Lox. The runtime representation of a Lox string is a Java string, so when we cast that to LoxCallable, the JVM will throw a ClassCastException. We don’t want our interpreter to vomit out some nasty Java stack trace and die. Instead, we need to check the type ourselves first.
+所以我们需要检查类型，看看是否是可以调用的函数。
 
-```
+> 在`Interpreter.java`文件中，在`evaluateCallExpr()`方法中
+
+```java
     }
-```
-
-*lox/Interpreter.java*
-in *visitCallExpr*()
-
-```
-    if (!(callee instanceof LoxCallable)) {
+    // 新增代码开始
+    if (!(callee instanceof AtguiguCallable)) {
       throw new RuntimeError(expr.paren,
           "Can only call functions and classes.");
     }
-    LoxCallable function = (LoxCallable)callee;
+    // 新增代码结束
+    AtguiguCallable function = (AtguiguCallable) callee;
 ```
-
-We still throw an exception, but now we’re throwing our own exception type, one that the interpreter knows to catch and report gracefully.
 
 ### $8.1.4$ 检查元数
 
@@ -4509,21 +4459,19 @@ fun add(a, b, c) {
 }
 ```
 
-这个函数定义了三个形参，`a` 、`b` 和`c`，所以它的元数是3，而且它期望有3个参数。那么如果你用下面的方式调用该函数会怎样：
+这个函数定义了三个形参，`a` 、`b` 和`c`，所以它的元数是$3$，而且它期望有$3$个参数。那么如果用下面的方式调用该函数会怎样：
 
 ```java
 add(1, 2, 3, 4); // Too many.
 add(1, 2);       // Too few.
 ```
 
-不同的语言对这个问题采用了不同的方法。当然，大多数静态类型的语言在编译时都会检查这个问题，如果实参与函数元数不匹配，则拒绝编译代码。JavaScript会丢弃你传递的所有多余参数。如果你没有传入的参数数量不足，它就会用神奇的与`null`类似但并不相同的值`undefined`来填补缺少的参数。Python更严格。如果参数列表太短或太长，它会引发一个运行时错误。
+所以，在执行可调用方法之前，我们检查参数列表的长度是否与可调用方法的元数相符。
 
-我认为后者是一种更好的方法。传递错误的参数数量几乎总是一个错误，这也是我在实践中确实犯的一个错误。有鉴于此，语言实现能越早引起用户的注意就越好。所以对于Lox，我们将采取Python的方法。在执行可调用方法之前，我们检查参数列表的长度是否与可调用方法的元数相符。
-
-*<u>lox/Interpreter.java，在 visitCallExpr()方法中添加代码：</u>*
+> 在`Interpreter.java`文件中，在`evaluateCallExpr()`方法中添加代码
 
 ```java
-    LoxCallable function = (LoxCallable)callee;
+    AtguiguCallable function = (AtguiguCallable)callee;
     // 新增部分开始
     if (arguments.size() != function.arity()) {
       throw new RuntimeError(expr.paren, "Expected " +
@@ -4534,12 +4482,12 @@ add(1, 2);       // Too few.
     return function.call(this, arguments);
 ```
 
-这就需要在`LoxCallable`接口中增加一个新方法来查询函数的元数。
+这就需要在`AtguiguCallable`接口中增加一个新方法来查询函数的元数。
 
 > 在`AtguiguCallable.java`文件中，在`AtguiguCallable`接口中新增
 
 ```java
-public interface LoxCallable {
+public interface AtguiguCallable {
   // 新增部分开始
   int arity();
   // 新增部分结束
@@ -4548,100 +4496,32 @@ public interface LoxCallable {
 
 我们可以在`call()`方法的具体实现中做元数检查。但是，由于我们会有多个实现`AtguiguCallable`的类，这将导致冗余的验证分散在多个类中。把它提升到访问方法中，这样我们可以在一个地方完成该功能。
 
-## $8.2$ 内置函数
-
-理论上我们可以调用函数了，但是我们还没有可供调用的函数。在我们实现用户自定义函数之前，现在正好可以介绍语言实现中一个重要但经常被忽视的方面——**原生函数（本地函数）**。这些函数是解释器向用户代码公开的，但它们是用宿主语言(在我们的例子中是Java)实现的，而不是正在实现的语言(Lox)。
-
-有时这些函数也被称为**原语**、**外部函数**或**外来函数**。由于这些函数可以在用户程序运行的时候被调用，因此它们构成了语言运行时的一部分。许多编程语言书籍都掩盖了这些内容，因为它们在概念上并不有趣。它们主要是一些比较繁重的工作。
-
-但是说到让你的语言真正擅长做有用的事情，语言提供的本地函数是关键。本地函数提供了对基础服务的访问，所有的程序都是根据这些服务来定义的。如果你不提供访问文件系统的本地函数，那么用户在写一个读取和显示文件的程序时就会有很大的困难。
-
-许多语言还允许用户提供自己的本地函数。这样的机制称为**外来函数接口(FFI)**、**本机扩展**、**本机接口**或类似的东西。这些机制很好，因为它们使语言实现者无需提供对底层平台所支持的每一项功能的访问。我们不会为 jlox 定义一个 FFI，但我们会添加一个本地函数，让你知道它是什么样子。
-
-### 10.2.1 报时
-
-当我们进入第三部分，开始着手开发更有效的Lox实现时，我们就会非常关心性能。性能需要测量，这也就意味着需要**基准测试**。这些代码就是用于测量解释器执行某些代码时所花费的时间。
-
-我们可以测量启动解释器、运行基准测试代码并退出所消耗的时间，但是这其中包括很多时间开销——JVM启动时间，操作系统欺诈等等。当然，这些东西确实很重要，但如果您只是试图验证对解释器某个部分的优化，你肯定不希望这些多余的时间开销掩盖你的结果。
-
-一个更好的解决方案是让基准脚本本身度量代码中两个点之间的时间间隔。要做到这一点，Lox程序需要能够报时。现在没有办法做到这一点——如果不访问计算机上的底层时钟，就无法从头实现一个可用的时钟。
-
-所以我们要添加`clock()`，这是一个本地函数，用于返回自某个固定时间点以来所经过的秒数。两次连续调用之间的差值可用告诉你两次调用之间经过了多少时间。这个函数被定义在全局作用域内，以确保解释器能够访问这个函数。
-
-*<u>lox/Interpreter.java，在 Interpreter类中，替换一行：</u>*
-
-```java
-class Interpreter implements Expr.Visitor<Object>,
-                             Stmt.Visitor<Void> {
-  // 替换部分开始                           
-  final Environment globals = new Environment();
-  private Environment environment = globals;
-  // 替换部分结束
-  void interpret(List<Stmt> statements) {
-```
-
-解释器中的`environment`字段会随着进入和退出局部作用域而改变，它会跟随当前环境。新加的`globals`字段则固定指向最外层的全局作用域。
-
-当我们实例化一个解释器时，我们将全局作用域中添加本地函数。
-
-*<u>lox/Interpreter.java，在 Interpreter类中新增：</u>*
-
-```java
-  private Environment environment = globals;
-  // 新增部分开始
-  Interpreter() {
-    globals.define("clock", new LoxCallable() {
-      @Override
-      public int arity() { return 0; }
-
-      @Override
-      public Object call(Interpreter interpreter,
-                         List<Object> arguments) {
-        return (double)System.currentTimeMillis() / 1000.0;
-      }
-
-      @Override
-      public String toString() { return "<native fn>"; }
-    });
-  }
-  // 新增部分结束
-  void interpret(List<Stmt> statements) {
-```
-
-这里有一个名为`clock`的变量，它的值是一个实现LoxCallable接口的Java匿名类。这里的`clock()`函数不接受参数，所以其元数为0。`call()`方法的实现是直接调用Java函数并将结果转换为以秒为单位的double值。
-
-如果我们想要添加其它本地函数——读取用户输入，处理文件等等——我们可以依次为它们提供实现LoxCallable接口的匿名类。但是在本书中，这个函数足以满足需要。
-
-让我们从函数定义的事务中解脱出来，由用户来接管吧。
-
-## $8.3$ 函数声明
+## $8.2$ 函数声明
 
 我们终于可以在添加变量时就引入的`declaration`规则中添加产生式了。就像变量一样，函数声明也会绑定一个新的名称。这意味中它们只能出现在允许声明的地方。
 
-```
+```js
 declaration    = funDecl
                | varDecl
                | statement ;
 ```
 
-> The updated `declaration` rule references this new rule:
-
 更新后的`declaration`引用了下面的新规则：
 
-```
-funDecl        = "fun" function ;
+```js
+funDecl        = "function" function ;
 function       = IDENTIFIER "(" parameters? ")" block ;
 ```
 
-主要的`funDecl`规则使用了一个单独的辅助规则`function`。函数*声明语句*是`fun`关键字后跟实际的函数体内容。等到我们实现类的时候，将会复用`function`规则来声明方法。这些方法与函数声明类似，但是前面没有`fun`。
+主要的`funDecl`规则使用了一个单独的辅助规则`function`。函数 **声明语句** 是`function`关键字后跟实际的函数体内容。等到我们实现类的时候，将会复用`function`规则来声明方法。这些方法与函数声明类似，但是前面没有`function`关键字。
 
 函数本身是一个名称，后跟带括号的参数列表和函数体。函数体是一个带花括号的块，可以使用与块语句相同的语法。参数列表则使用以下规则：
 
-```
+```js
 parameters     = IDENTIFIER ( "," IDENTIFIER )* ;
 ```
 
-这就类似于前面的`arguments` 规则，区别在于参数是一个标识符，而不是一个表达式。这对于解析器来说是很多要处理的新语法，但是生成的AST节点没这么复杂。
+这就类似于前面的`arguments` 规则，区别在于参数是一个标识符，而不是一个表达式。
 
 *<u>tool/GenerateAst.java，在 main()方法中添加：</u>*
 
@@ -4663,18 +4543,18 @@ parameters     = IDENTIFIER ( "," IDENTIFIER )* ;
 ```java
     try {
       // 新增部分开始
-      if (match(FUN)) return function("function");
+      if (match(FUNCTION)) return function("function");
       // 新增部分结束
       if (match(VAR)) return varDeclaration();
 ```
 
-像其它语句一样，函数是通过前面的关键字来识别的。当我们遇到`fun`时，我们就调用`function`。这步操作对应于`function`语法规则，因为我们已经匹配并消费了`fun`关键字。我们会一步步构建这个方法，首先从下面的代码开始：
+像其它语句一样，函数是通过前面的关键字来识别的。当我们遇到`function`关键字时，我们就调用`function`规则。这步操作对应于`function`语法规则，因为我们已经匹配并消费了`function`关键字。我们会一步步构建这个方法，首先从下面的代码开始：
 
-*<u>lox/Parser.java，在 expressionStatement()方法后添加：</u>*
+> 在`Parser.java`文件中，在`expressionStatement()`方法后添加
 
 ```java
-  private Stmt.Function function(String kind) {
-    Token name = consume(IDENTIFIER, "Expect " + kind + " name.");
+  private Function function(String kind) {
+      Token name = consume(IDENTIFIER, "Expect " + kind + " name.");
   }
 ```
 
@@ -4682,7 +4562,7 @@ parameters     = IDENTIFIER ( "," IDENTIFIER )* ;
 
 接下来，我们要解析参数列表和包裹着它们的一对小括号。
 
-*<u>lox/Parser.java，在 function()方法中添加：</u>*
+> 在`Parser.java`文件中，在`function()`方法中添加
 
 ```java
     Token name = consume(IDENTIFIER, "Expect " + kind + " name.");
@@ -4691,10 +4571,6 @@ parameters     = IDENTIFIER ( "," IDENTIFIER )* ;
     List<Token> parameters = new ArrayList<>();
     if (!check(RIGHT_PAREN)) {
       do {
-        if (parameters.size() >= 255) {
-          error(peek(), "Can't have more than 255 parameters.");
-        }
-
         parameters.add(
             consume(IDENTIFIER, "Expect parameter name."));
       } while (match(COMMA));
@@ -4706,25 +4582,23 @@ parameters     = IDENTIFIER ( "," IDENTIFIER )* ;
 
 这就像在函数调用中处理参数的代码一样，只是没有拆分到一个辅助方法中。外部的`if`语句用于处理零参数的情况，内部的`while`会循环解析参数，只要能找到分隔参数的逗号。其结果是包含每个参数名称的标记列表。
 
-就像我们处理函数调用的参数一样，我们在解析时验证是否超过了一个函数所允许的最大参数数。
-
 最后，我们解析函数主体，并将其封装为一个函数节点。
 
-*<u>lox/Parser.java，在 function()方法中添加：</u>*
+> 在`Parser.java`文件中，在`function()`方法中添加
 
 ```java
     consume(RIGHT_PAREN, "Expect ')' after parameters.");
     // 新增部分开始
     consume(LEFT_BRACE, "Expect '{' before " + kind + " body.");
     List<Stmt> body = block();
-    return new Stmt.Function(name, parameters, body);
+    return new Function(name, parameters, body);
     // 新增部分结束
   }
 ```
 
 请注意，在调用`block()`方法之前，我们已经消费了函数体开头的`{`。这是因为`block()`方法假定大括号标记已经匹配了。在这里消费该标记可以让我们在找不到`{`的情况下报告一个更精确的错误信息，因为我们知道当前是在一个函数声明的上下文中。
 
-## $8.4$ 函数对象
+## $8.3$ 函数对象
 
 我们已经解析了一些语法，通常我们要开始准备解释了，但是我们首先需要思考一下，在$Java$中如何表示一个$Atguigu$函数。我们需要跟踪形参，以便在函数被调用时可以将形参与实参值进行绑定。当然，我们也要保留函数体的代码，以便我们可以执行它。
 
@@ -4745,9 +4619,9 @@ public class AtguiguFunction implements AtguiguCallable {
 }
 ```
 
-使用如下方式实现LoxCallable的`call()`方法：
+使用如下方式实现`AtguiguCallable`的`call()`方法：
 
-*<u>lox/LoxFunction.java，在 LoxFunction()方法后添加：</u>*
+> 在`Function.java`文件中，在`AtguiguFunction()`方法后添加
 
 ```java
   @Override
@@ -4766,32 +4640,32 @@ public class AtguiguFunction implements AtguiguCallable {
 
 这几行代码是我们的解释器中最基本、最强大的部分之一。正如我们在上一章中所看到的，管理名称环境是语言实现中的核心部分。函数与此紧密相关。
 
-参数是函数的核心，尤其是考虑到函数*封装*了其参数——函数之外的代码看不到这些参数。这意味着每个函数都会维护自己的环境，其中存储着那些变量。
+参数是函数的核心，尤其是考虑到函数*封装*了其参数—函数之外的代码看不到这些参数。这意味着每个函数都会维护自己的环境，其中存储着那些变量。
 
-此外，这个环境必须是动态创建的。每次函数*调用*都会获得自己的环境，否则，递归就会中断。如果在同一时刻对相同的函数有多次调用，那么每个调用都需要自身的环境，即便它们都是对相同函数的调用。
+此外，这个环境必须是动态创建的。每次函数 **调用** 都会获得自己的环境，否则，递归就会中断。如果在同一时刻对相同的函数有多次调用，那么每个调用都需要自身的环境，即便它们都是对相同函数的调用。
 
-举例来说，下面是一个计数到3的复杂方法：
+举例来说，下面是一个计数到$3$的复杂方法：
 
 ```js
-fun count(n) {
+function count(n) {
   if (n > 1) count(n - 1);
-  print n;
+  print(n);
 }
 
 count(3);
 ```
 
-假设一下，如果我们在最内层的嵌套调用中即将打印1的时候暂停了解释器。打印2和3的外部调用还没有打印出它们的值，所以在内存的某个地方一定有环境仍然存储着这样的数据：n在一个上下文中被绑定到3，在另一个上下文中被绑定到2，而在最内层调用中绑定为1，比如：
+假设一下，如果我们在最内层的嵌套调用中即将打印$1$的时候暂停了解释器。打印$2$和$3$的外部调用还没有打印出它们的值，所以在内存的某个地方一定有环境仍然存储着这样的数据：$n$在一个上下文中被绑定到$3$，在另一个上下文中被绑定到$2$，而在最内层调用中绑定为$1$，比如：
 
 ![A separate environment for each recursive call.](10.函数/recursion.png)
 
-这就是为什么我们在每次*调用*时创建一个新的环境，而不是在函数声明时创建。我们前面看到的`call()`方法就是这样做的。在调用开始的时候，它创建了一个新环境。然后它以同步的方式遍历形参和实参列表。对于每一对参数，它用形参的名字创建一个新的变量，并将其与实参的值绑定。
+这就是为什么我们在每次 **调用** 时创建一个新的环境，而不是在函数声明时创建。我们前面看到的`call()`方法就是这样做的。在调用开始的时候，它创建了一个新环境。然后它以同步的方式遍历形参和实参列表。对于每一对参数，它用形参的名字创建一个新的变量，并将其与实参的值绑定。
 
 所以，对于类似下面这样的代码：
 
-```java
-fun add(a, b, c) {
-  print a + b + c;
+```js
+function add(a, b, c) {
+  print(a + b + c);
 }
 
 add(1, 2, 3);
@@ -4807,11 +4681,11 @@ add(1, 2, 3);
 
 一旦函数的主体执行完毕，`executeBlock()`就会丢弃该函数的本地环境，并恢复调用该函数前的活跃环境。最后，`call()`方法会返回`null`，它向调用者返回`nil`。（我们会在稍后添加返回值）
 
-从机制上讲，这段代码是非常简单的。遍历几个列表，绑定一些新变量，调用一个方法。但这就是将代码块变成有生命力的调用执行的地方。这是我在整本书中最喜欢的片段之一。如果你愿意的话，可以花点时间好好思考一下。
+从机制上讲，这段代码是非常简单的。遍历几个列表，绑定一些新变量，调用一个方法。但这就是将代码块变成有生命力的调用执行的地方。
 
-完成了吗？好的。注意当我们绑定参数时，我们假设参数和参数列表具有相同的长度。这是安全的，因为`visitCallExpr()`在调用`call()`之前会检查元数。它依靠报告其元数的函数来做到这一点。
+完成了吗？好的。注意当我们绑定参数时，我们假设参数和参数列表具有相同的长度。这是安全的，因为`evaluateCallExpr()`在调用`call()`之前会检查元数。它依靠报告其元数的函数来做到这一点。
 
-*<u>lox/LoxFunction.java，在 LoxFunction()方法后添加：</u>*
+> 在`AtguiguFunction.java`文件中，在`AtguiguFunction()`方法后添加
 
 ```java
   @Override
@@ -4820,14 +4694,14 @@ add(1, 2, 3);
   }
 ```
 
-这基本就是我们的函数对象表示了。既然已经到了这一步，我们也可以实现toString()。
+这基本就是我们的函数对象表示了。既然已经到了这一步，我们也可以实现`toString()`。
 
-*<u>lox/LoxFunction.java，在 LoxFunction()方法后添加：</u>*
+> 在`AtguiguFunction.java`文件中，在`AtguiguFunction()`方法后添加
 
 ```java
   @Override
   public String toString() {
-    return "<fn " + declaration.name.lexeme + ">";
+    return "<函数 " + declaration.name.lexeme + ">";
   }
 ```
 
@@ -4835,49 +4709,46 @@ add(1, 2, 3);
 
 ```javascript
 fun add(a, b) {
-  print a + b;
+  print(a + b);
 }
 
-print add; // "<fn add>".
+print add; // "<函数 add>".
 ```
 
-### $8.4.1$ 解释函数声明
+### $8.3.1$ 解释函数声明
 
-我们很快就会回头来完善LoxFunction，但是现在已足够开始进行解释了。现在，我们可以访问函数声明节点了。
+我们很快就会回头来完善`AtguiguFunction`，但是现在已足够开始进行解释了。现在，我们可以访问函数声明节点了。
 
-*<u>lox/Interpreter.java，在 visitExpressionStmt()方法后添加：</u>*
+> 在`Interpreter.java`文件中，在`executeExpressionStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitFunctionStmt(Stmt.Function stmt) {
-    LoxFunction function = new LoxFunction(stmt);
+  public Void executeFunctionStmt(Function stmt) {
+    AtguiguFunction function = new AtguiguFunction(stmt);
     environment.define(stmt.name.lexeme, function);
     return null;
   }
 ```
 
-这类似于我们介绍其它文本表达式的方式。我们会接收一个函数*语法*节点——函数的编译时表示形式——然后将其转换为运行时表示形式。在这里就是一个封装了语法节点的LoxFunction实例。
+这类似于我们介绍其它文本表达式的方式。我们会接收一个函数 **语法** 节点—函数的编译时表示形式—然后将其转换为运行时表示形式。在这里就是一个封装了语法节点的`AtguiguFunction`实例。
 
-函数声明与其它文本节点的不同之处在于，声明还会将结果对象绑定到一个新的变量。因此，在创建LoxFunction之后，我们在当前环境中创建一个新的绑定，并在其中保存对该函数的引用。
+函数声明与其它文本节点的不同之处在于，声明还会将结果对象绑定到一个新的变量。因此，在创建`AtguiguFunction`之后，我们在当前环境中创建一个新的绑定，并在其中保存对该函数的引用。
 
-这样，我们就可以在Lox中定义和调用我们自己的函数。试一下：
+这样，我们就可以在$Atguigu$中定义和调用我们自己的函数。试一下：
 
 ```javascript
-fun sayHi(first, last) {
-  print "Hi, " + first + " " + last + "!";
+function sayHi(first, last) {
+  print("Hi, " + first + " " + last + "!");
 }
 
-sayHi("Dear", "Reader");
+sayHi("Dear", "Atguigu");
 ```
 
-我不知道你怎么想的，但对我来说，这看起来像是一种虔诚的编程语言。
-
-## $8.5$ $return$语句
+## $8.4$ $return$语句
 
 我们可以通过传递参数将数据输入函数中，但是我们没有办法将结果 **传出来** 。所以我们需要`return`语句。
 
 ```
-statement      → exprStmt
+statement      = exprStmt
                | forStmt
                | ifStmt
                | printStmt
@@ -4885,15 +4756,15 @@ statement      → exprStmt
                | whileStmt
                | block ;
 
-returnStmt     → "return" expression? ";" ;
+returnStmt     = "return" expression? ";" ;
 ```
 
 我们又得到一个`statement`规则下的新产生式（实际上也是最后一个）。一个`return`语句就是一个`return`关键字，后跟一个可选的表达式，并以一个分号结尾。
 
-返回值是可选的，用以支持从一个不返回有效值的函数中提前退出。在静态类型语言中，void函数不返回值，而非void函数返回值。由于Lox是动态类型的，所以没有真正的void函数。在调用一个不包含`return`语句的函数时，编译器没有办法阻止你获取其结果值。
+返回值是可选的，用以支持从一个不返回有效值的函数中提前退出。在静态类型语言中，`void`函数不返回值，而非`void`函数返回值。由于$Atguigu$是动态类型的，所以没有真正的`void`函数。在调用一个不包含`return`语句的函数时，编译器没有办法阻止我们获取其结果值。
 
 ```javascript
-fun procedure() {
+function procedure() {
   print("don't return anything");
 }
 
@@ -4901,7 +4772,7 @@ var result = procedure();
 print(result); // ?
 ```
 
-这意味着每个Lox函数都要返回一些内容，即使其中根本不包含`return`语句。我们使用`nil`，这就是为什么LoxFunction的`call()`实现在最后返回`null`。同样，如果你省略了`return `语句中的值，我们将其视为等价于：
+这意味着每个$Atguigu$函数都要返回一些内容，即使其中根本不包含`return`语句。我们使用`nil`，这就是为什么`AtguiguFunction`的`call()`实现在最后返回`null`。同样，如果省略了`return `语句中的值，我们将其视为等价于：
 
 ```java
 return nil;
@@ -4921,7 +4792,7 @@ return nil;
 
 其中保留了`return`关键字标记（这样我们可以使用该标记的位置来报告错误），以及返回的值（如果有的话）。我们像解析其它语句一样来解析它，首先识别起始的关键字。
 
-*<u>lox/Parser.java，在 statement()方法中添加：</u>*
+> 在`Parser.java`文件中，在`statement()`方法中添加
 
 ```java
     if (match(PRINT)) return printStatement();
@@ -4933,7 +4804,7 @@ return nil;
 
 分支会跳转到：
 
-*<u>lox/Parser.java，在 printStatement()方法后添加：</u>*
+> 在`Parser.java`文件中，在`printStatement()`方法后添加
 
 ```java
   private Stmt returnStatement() {
@@ -4944,23 +4815,23 @@ return nil;
     }
 
     consume(SEMICOLON, "Expect ';' after return value.");
-    return new Stmt.Return(keyword, value);
+    return new Return(keyword, value);
   }
 ```
 
 在捕获先前消耗的`return`关键字之后，我们会寻找一个值表达式。因为很多不同的标记都可以引出一个表达式，所以很难判断是否存在返回值。相反，我们检查它是否不存在。因为分号不能作为表达式的开始，如果下一个标记是分号，我们就知道一定没有返回值。
 
-### $8.5.1$ 从函数调用中返回
+### $8.4.1$ 从函数调用中返回
 
-解释`return`语句是很棘手的。你可以从函数体中的任何位置返回，甚至是深深嵌套在其它语句中的位置。当返回语句被执行时，解释器需要完全跳出当前所在的上下文，完成函数调用，就像某种顶层的控制流结构。
+解释`return`语句是很棘手的。我们可以从函数体中的任何位置返回，甚至是深深嵌套在其它语句中的位置。当返回语句被执行时，解释器需要完全跳出当前所在的上下文，完成函数调用，就像某种顶层的控制流结构。
 
 举例来说，假设我们正在运行下面的代码，并且我们即将执行`return`语句：
 
 ```java
-fun count(n) {
+function count(n) {
   while (n < 100) {
     if (n == 3) return n; // <--
-    print n;
+    print(n);
     n = n + 1;
   }
 }
@@ -4968,28 +4839,27 @@ fun count(n) {
 count(1);
 ```
 
-Java调用栈目前看起来大致如下所示：
+$Java$调用栈目前看起来大致如下所示：
 
 ```java
-Interpreter.visitReturnStmt()
-Interpreter.visitIfStmt()
+Interpreter.executeReturnStmt()
+Interpreter.executeIfStmt()
 Interpreter.executeBlock()
-Interpreter.visitBlockStmt()
-Interpreter.visitWhileStmt()
+Interpreter.executeBlockStmt()
+Interpreter.executeWhileStmt()
 Interpreter.executeBlock()
-LoxFunction.call()
-Interpreter.visitCallExpr()
+AtguiguFunction.call()
+Interpreter.evaluateCallExpr()
 ```
 
-我们需要从栈顶一直回退到`call()`。我不知道你怎么想，但是对我来说，这听起来很像是异常。当我们执行`return`语句时，我们会使用一个异常来解开解释器，经过所有函数内含语句的visit方法，一直回退到开始执行函数体的代码。
+我们需要从栈顶一直回退到`call()`。我不知道你怎么想，但是对我来说，这听起来很像是异常。当我们执行`return`语句时，我们会使用一个异常来解开解释器，经过所有函数内含语句的执行方法，一直回退到开始执行函数体的代码。
 
-新的AST节点的visit方法如下所示：
+新的$AST$节点的执行方法如下所示：
 
-*<u>lox/Interpreter.java，在 visitPrintStmt()方法后添加：</u>*
+> 在`Interpreter.java`文件中，在`executePrintStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitReturnStmt(Stmt.Return stmt) {
+  public Void executeReturnStmt(Return stmt) {
     Object value = null;
     if (stmt.value != null) value = evaluate(stmt.value);
 
@@ -4999,26 +4869,26 @@ Interpreter.visitCallExpr()
 
 如果我们有返回值，就对其求值，否则就使用`nil`。然后我们取这个值并将其封装在一个自定义的异常类中，并抛出该异常。
 
-*<u>lox/Return.java，创建新文件：</u>*
+> 创建新文件`Return.java`
 
 ```java
-package com.craftinginterpreters.lox;
+package com.atguigu;
 
-class Return extends RuntimeException {
-  final Object value;
+public class Return extends RuntimeException {
+  public final Object value;
 
-  Return(Object value) {
+  public Return(Object value) {
     super(null, null, false, false);
     this.value = value;
   }
 }
 ```
 
-这个类使用Java运行时异常类来封装返回值。其中那个奇怪的带有`null`和`false`的父类构造器方法，禁用了一些我们不需要的JVM机制。因为我们只是使用该异常类来控制流，而不是真正的错误处理，所以我们不需要像堆栈跟踪这样的开销。
+这个类使用$Java$运行时异常类来封装返回值。其中那个奇怪的带有`null`和`false`的父类构造器方法，禁用了一些我们不需要的$JVM$机制。因为我们只是使用该异常类来控制流，而不是真正的错误处理，所以我们不需要像堆栈跟踪这样的开销。
 
 我们希望可以一直跳出到函数调用开始的地方，也就是LoxFunction中的`call()`方法。
 
-*<u>lox/LoxFunction.java，在 call()方法中替换一行：</u>*
+> 在`AtguiguFunction.java`文件中，在`call()`方法中替换$1$行
 
 ```java
          arguments.get(i));
@@ -5033,32 +4903,32 @@ class Return extends RuntimeException {
     return null;
 ```
 
-我们将对`executeBlock()`的调用封装在一个try-catch块中。当捕获一个返回异常时，它会取出其中的值并将其作为`call()`方法的返回值。如果没有捕获任何异常，意味着函数到达了函数体的末尾，而且没有遇到`return`语句。在这种情况下，隐式地返回`nil`。
+我们将对`executeBlock()`的调用封装在一个`try-catch`块中。当捕获一个返回异常时，它会取出其中的值并将其作为`call()`方法的返回值。如果没有捕获任何异常，意味着函数到达了函数体的末尾，而且没有遇到`return`语句。在这种情况下，隐式地返回`nil`。
 
-我们来试一下。我们终于有能力支持这个经典的例子——递归函数计算Fibonacci数：
+我们来试一下。我们终于有能力支持这个经典的例子—递归函数计算$Fibonacci$数：
 
-```java
-fun fib(n) {
+```js
+function fib(n) {
   if (n <= 1) return n;
   return fib(n - 2) + fib(n - 1);
 }
 
 for (var i = 0; i < 20; i = i + 1) {
-  print fib(i);
+  print(fib(i));
 }
 ```
 
 这个小程序练习了我们在过去几章中实现的几乎所有语言特性，包括表达式、算术运算、分支、循环、变量、函数、函数调用、参数绑定和返回。
 
-## $8.6$ 局部函数和闭包
+## $8.5$ 内部函数和闭包
 
 我们的函数功能已经相当全面了，但是还有一个漏洞需要修补。实际上，这是一个很大的问题，我们将会在下一章中花费大部分时间来修补它，但是我们可以从这里开始。
 
-LoxFunction中的`call()`实现创建了一个新的环境，并在其中绑定了函数的参数。当我向你展示这段代码时，我忽略了一个重要的问题：这个环境的父类是什么？
+`AtguiguFunction`中的`call()`实现创建了一个新的环境，并在其中绑定了函数的参数。当我向你展示这段代码时，我忽略了一个重要的问题：这个环境的父类是什么？
 
-目前，它始终是`globals`，即顶级的全局环境。这样，如果一个标识符不是在函数体内部定义的，解释器可以在函数外部的全局作用域中查找它。在Fibonacci的例子中，这就是解释器如何能够在函数体中实现对`fib`的递归调用——`fib`是一个全局变量。
+目前，它始终是`globals`，即顶级的全局环境。这样，如果一个标识符不是在函数体内部定义的，解释器可以在函数外部的全局作用域中查找它。在$Fibonacci$的例子中，这就是解释器如何能够在函数体中实现对`fib`的递归调用—`fib`是一个全局变量。
 
-但请记住，在Lox中，允许在可以绑定名字的*任何地方*进行函数声明。其中包括Lox脚本的顶层，但也包括块或其他函数的内部。Lox支持在另一个函数内定义或在一个块内嵌套的**局部函数**。
+但请记住，在$Atguigu$编程语言中，允许在可以绑定名字的 **任何地方** 进行函数声明。其中包括$Atguigu$脚本的顶层，但也包括块或其他函数的内部。$Atguigu$支持在另一个函数内定义或在一个块内嵌套的**内部函数**。
 
 考虑下面这个经典的例子：
 
@@ -5094,7 +4964,7 @@ counter(); // "2".
 
 所以，在函数声明的地方，我们可以看到`i`。但是当我们从 `makeCounter()` 返回并退出其主体时，解释器会丢弃这个环境。因为解释器不会保留`count()` 外围的环境，所以要靠函数对象本身来保存它。
 
-这种数据结构被称为**闭包**，因为它 "封闭 "并保留着函数声明的外围变量。闭包早在Lisp时代就已经存在了，语言黑客们想出了各种方法来实现闭包。在jlox中，我们将采用最简单的方式。在LoxFunction中，我们添加一个字段来存储环境。
+这种数据结构被称为**闭包**，因为它 "封闭 "并保留着函数声明的外围变量。在$Atguigu$中，我们将采用最简单的方式。在`AtguiguFunction`中，我们添加一个字段来存储环境。
 
 > 在`AtguiguFunction.java`文件中，在`AtguiguFunction`类中添加
 
@@ -5103,16 +4973,16 @@ counter(); // "2".
   // 新增部分开始
   private final Environment closure;
   // 新增部分结束
-  AtguiguFunction(Function declaration) {
+  public AtguiguFunction(Function declaration) {
 ```
 
 我们在构造函数中对其初始化。
 
-*<u>lox/LoxFunction.java，在 LoxFunction()构造方法中替换一行：</u>*
+> 在`AtguiguFunction.java`文件中，在`AtguiguFunction()`构造方法中替换$1$行
 
 ```java
   //替换部分开始
-  AtguiguFunction(Function declaration, Environment closure) {
+  public AtguiguFunction(Function declaration, Environment closure) {
     this.closure = closure;
     // 替换部分结束
     this.declaration = declaration;
@@ -5120,19 +4990,19 @@ counter(); // "2".
 
 当我们创建`AtguiguFunction`类时，我们会捕获当前环境。
 
-*<u>lox/Interpreter.java，在 visitFunctionStmt()方法中替换一行：</u>*
+> 在`Interpreter.java`文件中，在`executeFunctionStmt()`方法中替换$1$行
 
 ```java
-    public Void visitFunctionStmt(Stmt.Function stmt) {
+    public Void executeFunctionStmt(Function stmt) {
       // 替换部分开始
-      LoxFunction function = new LoxFunction(stmt, environment);
+      AtguiguFunction function = new AtguiguFunction(stmt, environment);
       // 替换部分结束
       environment.define(stmt.name.lexeme, function);
 ```
 
 这是函数声明时生效的环境，而不是函数被调用时的环境，这正是我们想要的。它代表了函数声明时的词法作用域。最后，当我们调用函数时，我们使用该环境作为调用的父环境，而不是直接使用`globals`。
 
-*<u>lox/LoxFunction.java，在 call()方法中替换一行：</u>*
+> 在`AtguiguFunction.java`文件中，在`call()`方法中替换$1$行
 
 ```java
                       List<Object> arguments) {
@@ -5146,9 +5016,9 @@ counter(); // "2".
 
 ![The environment chain with the closure.](10.函数/closure.png)
 
-如你所见，现在解释器可以在需要的时候找到`i`，因为它在环境链中。现在尝试运行makeCounter()的例子，起作用了！ 
+如你所见，现在解释器可以在需要的时候找到`i`，因为它在环境链中。现在尝试运行`makeCounter()`的例子，起作用了！ 
 
-函数让我们对代码进行抽象、重用和编排。Lox比之前的初级算术计算器要强大得多。唉，在我们匆匆忙忙支持闭包时，已经让一小部分动态作用域泄露到解释器中了。在下一章中，我们将深入探索词法作用域，堵住这个漏洞。
+函数让我们对代码进行抽象、重用和编排。$Atguigu$比之前的初级算术计算器要强大得多。唉，在我们匆匆忙忙支持闭包时，已经让一小部分动态作用域泄露到解释器中了。在下一章中，我们将深入探索词法作用域，堵住这个漏洞。
 
 # $9$ 解析和绑定
 
@@ -5186,7 +5056,7 @@ var a = "outer";
 
   这里，打印的`a`是外层的，因为它在使用该变量的`print`语句之前。在大多数情况下，在单行代码中，文本中靠前的变量声明在时间上也先于变量使用。但并不总是如此。正如我们将看到的，函数可以推迟代码块，以使其动态执行的时间不受静态文本顺序的约束。
 
-- “最内层”是因为我们的好朋友—变量遮蔽。在外围作用域中可能存在多个具有给定名称的变量。如：
+- “最内层”是因为 **变量遮蔽** 。在外围作用域中可能存在多个具有给定名称的变量。如：
   
   ```js
   var a = "outer";
@@ -5203,7 +5073,7 @@ var a = "outer";
 ```js
 var a = "global";
 {
-  fun showA() {
+  function showA() {
     print(a);
   }
 
@@ -5213,9 +5083,9 @@ var a = "global";
 }
 ```
 
-在你执行这段代码之前，先思考一下它 **应该** 输出什么。
+在我们执行这段代码之前，先思考一下它 **应该** 输出什么。
 
-如果我们熟悉其它语言中的闭包，可能期望会输出两次“global”。对 `showA() `的第一次调用肯定会打印 `"global"`，因为我们甚至还没有执行到内部变量 `a` 的声明。而根据我们的规则，一个变量表达式总是解析为同一个变量，这意味着对 `showA() `的第二次调用也应该打印出同样的内容。
+如果我们熟悉其它语言中的闭包，可能期望会输出两次`"global"`。对 `showA() `的第一次调用肯定会打印 `"global"`，因为我们甚至还没有执行到内部变量 `a` 的声明。而根据我们的规则，一个变量表达式总是解析为同一个变量，这意味着对 `showA() `的第二次调用也应该打印出同样的内容。
 
 可惜，它输出的是：
 
@@ -5238,27 +5108,27 @@ block
 
 ![A block environment linking to the global one.](11.解析和绑定/environment-2.png)
 
-我们得到一个对应该代码块的新环境。在这个环境中，我们声明了一个名称`showA`，它绑定到为表示函数而创建的LoxFunction对象。该对象中有一个`closure`字段，用于捕获函数声明时的环境，因此它有一个指向该代码块环境的引用。
+我们得到一个对应该代码块的新环境。在这个环境中，我们声明了一个名称`showA`，它绑定到为表示函数而创建的`AtguiguFunction`对象。该对象中有一个`closure`字段，用于捕获函数声明时的环境，因此它有一个指向该代码块环境的引用。
 
 现在我们调用`showA()`。
 
 ![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the global environment.](11.解析和绑定/environment-3.png)
 
-解释器为showA()的函数体动态地创建了一个新环境。它是空的，因为该函数没有声明任何变量。该环境的父环境是该函数的闭包——外部的代码块环境。
+解释器为`showA()`的函数体动态地创建了一个新环境。它是空的，因为该函数没有声明任何变量。该环境的父环境是该函数的闭包—外部的代码块环境。
 
-在`showA()`函数体中，输出`a`的值。解释器通过遍历环境链来查找这个值。它会一直到达全局环境，在其中找到变量`a`并打印“global”。太好了。
+在`showA()`函数体中，输出`a`的值。解释器通过遍历环境链来查找这个值。它会一直到达全局环境，在其中找到变量`a`并打印`"global"`。太好了。
 
 接下来，我们声明第二个`a`，这次是在代码块内。
 
 ![The block environment has both 'a' and 'showA' now.](11.解析和绑定/environment-4.png)
 
-它和`showA()`在同一个代码块中——同一个作用域，所以它进入了同一个环境，也就是`showA()`的闭包所指向的环境。这就是有趣的地方了。我们再次调用`showA()`。
+它和`showA()`在同一个代码块中—同一个作用域，所以它进入了同一个环境，也就是`showA()`的闭包所指向的环境。这就是有趣的地方了。我们再次调用`showA()`。
 
 ![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the block environment.](11.解析和绑定/environment-5.png)
 
 我们再次为`showA()`的函数体创建了一个新的空环境，将其连接到该闭包，并运行函数体。当解释器遍历环境链去查找`a`时，它会发现代码块环境中新的变量`a`。
 
-我选择了一种实现环境的方式，希望它能够与您对作用域的非正式直觉相一致。我们倾向于认为一个块中的所有代码在同一个作用域中，所以我们的解释器使用了一个环境来表示它。每个环境都是一个可变的hash表。当一个新的局部变量被声明时，它会被加入该作用域的现有环境中。
+我选择了一种实现环境的方式，希望它能够与我们对作用域的非正式直觉相一致。我们倾向于认为一个块中的所有代码在同一个作用域中，所以我们的解释器使用了一个环境来表示它。每个环境都是一个可变的哈希表。当一个新的局部变量被声明时，它会被加入该作用域的现有环境中。
 
 就像生活中的很多直觉一样，这种直觉并不完全正确。一个代码块并不一定都是同一个作用域。考虑一下：
 
@@ -5271,35 +5141,21 @@ block
 }
 ```
 
-在标记的第一行，作用域中只有`a`。在第二行时，`a`和`b`都在其中。如果将作用域定义为一组声明，那么它们显然不是相同的作用域——它们不包含相同的声明。这就好像是`var`语句将代码块分割成了两个独立的作用域，变量声明前的作用域和包含新变量的作用域[^4]。
+在标记的第一行，作用域中只有`a`。在第二行时，`a`和`b`都在其中。如果将作用域定义为一组声明，那么它们显然不是相同的作用域—它们不包含相同的声明。这就好像是`var`语句将代码块分割成了两个独立的作用域，变量声明前的作用域和包含新变量的作用域。
 
-但是在我们的实现中，环境确实表现得像整个代码块是一个作用域，只是这个作用域会随时间变化。而闭包不是这样的。当函数被声明时，它会捕获一个指向当前环境的引用。函数*应该*捕获一个冻结的环境快照，就像它存在于函数被声明的那一瞬间。但是事实上，在Java代码中，它引用的是一个实际可变的环境对象。当后续在该环境所对应的作用域内声明一个变量时，闭包会看到该变量，即使变量声明*没有*出现在函数之前。
-
-### $9.1.2$ 持久环境
-
-有一种编程风格，使用所谓的**持久性数据结构**。与你在命令式编程中所熟悉的模糊的数据结构不同，持久化数据结构永远不能被直接修改。相应地，对现有结构的任何 "修改 "都会产生一个全新的对象，其中包含所有的原始数据和新的修改。而原有的对象则保持不变。
-
-如果我们将这一技术应用于环境，那么每次你声明一个变量时，都会返回一个新的环境，其中包含所有先前声明的变量和一个新名称。声明一个变量会执行隐式分割，在声明变量之前与之后都有一个环境：
-
-![Separate environments before and after the variable is declared.](http://craftinginterpreters.com/image/resolving-and-binding/split.png)
-
-当函数被声明时，闭包保留对正在运行的Environment实例的引用。由于该代码块中后续的任何声明都会生成新的Environment对象，闭包就不会看到新的变量，我们的问题也得到修复。
-
-这是解决该问题的合法方式，也是在Scheme解释器中实现变量环境的经典方式。对于Lox，我们可以这样做，但是这意味着要回头修改一大堆现有的代码。
-
-我不会把你拖下水的。我们将保持表示环境的方式不变。我们不会让数据变得更加静态结构化，而是将静态解析嵌入访问操作本身。
+但是在我们的实现中，环境确实表现得像整个代码块是一个作用域，只是这个作用域会随时间变化。而闭包不是这样的。当函数被声明时，它会捕获一个指向当前环境的引用。函数 **应该** 捕获一个冻结的环境快照，就像它存在于函数被声明的那一瞬间。但是事实上，在$Java$代码中，它引用的是一个实际可变的环境对象。当后续在该环境所对应的作用域内声明一个变量时，闭包会看到该变量，即使变量声明 **没有** 出现在函数之前。
 
 ## $9.2$ 语义分析
 
-我们的解释器每次对变量表达式求值时，都会**解析**变量——追踪它所指向的声明。如果这个变量被包在一个运行1000次的循环中，那么该变量就会被重复解析1000次。
+我们的解释器每次对变量表达式求值时，都会**解析**变量—追踪它所指向的声明。如果这个变量被包在一个运行$1000$次的循环中，那么该变量就会被重复解析$1000$次。
 
-我们知道静态作用域意味着一个变量的使用总是解析到同一个声明，而且可以通过查看文本来确定。既然如此，我们为什么每次都要动态地解析呢？这样做不仅仅导致了这个恼人的bug，而且也造成了不必要的低效。
+我们知道静态作用域意味着一个变量的使用总是解析到同一个声明，而且可以通过查看文本来确定。既然如此，我们为什么每次都要动态地解析呢？这样做不仅仅导致了这个恼人的$bug$，而且也造成了不必要的低效。
 
-一个更好的解决方案是一次性解析每个变量的使用。编写一段代码，检查用户的程序，找到所提到的每个变量，并找出每个变量引用的是哪个声明。这个过程是**语义分析**的一个例子。解析器只告诉程序在语法上是否正确(语法分析)，而语义分析则更进一步，开始弄清楚程序的各个部分的实际含义。在这种情况下，我们的分析将解决变量绑定的问题。我们不仅要知道一个表达式是一个变量，还要知道它是哪个变量。
+一个更好的解决方案是一次性解析每个变量的使用。编写一段代码，检查用户的程序，找到所提到的每个变量，并找出每个变量引用的是哪个声明。这个过程是**语义分析**的一个例子。解析器只告诉程序在语法上是否正确（语法分析），而语义分析则更进一步，开始弄清楚程序的各个部分的实际含义。在这种情况下，我们的分析将解决变量绑定的问题。我们不仅要知道一个表达式是一个变量，还要知道它是哪个变量。
 
-有很多方法可以存储变量及其声明直接的绑定关系。当我们使用Lox的C解释器时，我们将有一种更有效的方式来存储和访问局部变量。但是对于jlox来说，我想尽量减少对现有代码库的附带损害。我不希望扔掉一堆基本上都很好的代码。
+有很多方法可以存储变量及其声明直接的绑定关系。
 
-相对地，我们将以最充分利用现有Environment类的方式来存储解析结果。回想一下，在有问题的例子中，`a`的访问是如何被解释的。
+而我们将以最充分利用现有`Environment`类的方式来存储解析结果。回想一下，在有问题的例子中，`a`的访问是如何被解释的。
 
 ![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the global environment.](http://craftinginterpreters.com/image/resolving-and-binding/environment-3.png)
 
@@ -5309,13 +5165,13 @@ block
 
 下一次查找会遍历环境链，在第二个环境中找到`a`并停止。每个环境都对应于一个声明变量的词法作用域。如果我们能够保证变量查找总是在环境链上遍历相同数量的链接，也就可以保证每次都可以在相同的作用域中找到相同的变量。
 
-要“解析”一个变量使用，我们只需要计算声明的变量在环境链中有多少“跳”。有趣的问题是在什么时候进行这个计算——或者换句话说，在解释器的实现中，这段代码要添加到什么地方？
+要“解析”一个变量使用，我们只需要计算声明的变量在环境链中有多少“跳”。有趣的问题是在什么时候进行这个计算—或者换句话说，在解释器的实现中，这段代码要添加到什么地方？
 
-因为我们是根据源代码的结构来计算一个静态属性，所以答案显然是在解析器中。那是传统的选择，也是我们以后在 clox 中实现它的地方。在这里同样也适用，但是我想给你展示另一种技巧。我们会单独写一个解析器。
+因为我们是根据源代码的结构来计算一个静态属性，所以答案显然是在解析器中。
 
 ### $9.2.1$ 变量解析过程
 
-在解析器生成语法树之后，解释器执行语法树之前，我们会对语法树再进行一次遍历，以解析其中包含的变量。在解析和执行之间的额外遍历是很常见的。如果Lox中有静态类型，我们可以插入一个类型检查器。优化也经常是在类似单独的遍历过程中实现的。基本上，任何不依赖与运行时状态的工作都可以通过这种方式完成。
+在解析器生成语法树之后，解释器执行语法树之前，我们会对语法树再进行一次遍历，以解析其中包含的变量。在解析和执行之间的额外遍历是很常见的。基本上，任何不依赖与运行时状态的工作都可以通过这种方式完成。
 
 我们的变量解析工作就像一个小型的解释器。它会遍历整棵树，访问每个节点，但是静态分析与动态执行还是不同的：
 
@@ -5356,17 +5212,16 @@ public class Resolver{
 
 - 变量定义和赋值表达式需要解析它们的变量值。
 
-其余的节点不做任何特别的事情，但是我们仍然需要为它们实现visit方法，以遍历其子树。尽管`+`表达式本身没有任何变量需要解析，但是它的任一操作数都可能需要。
+其余的节点不做任何特别的事情，但是我们仍然需要为它们实现解析方法，以遍历其子树。尽管`+`表达式本身没有任何变量需要解析，但是它的任一操作数都可能需要。
 
 ### $9.3.1$ 解析代码块
 
-我们从块语法开始，因为它们创建了局部作用域——魔法出现的地方。
+我们从块语法开始，因为它们创建了局部作用域—魔法出现的地方。
 
-*<u>lox/Resolver.java，在 Resolver()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`Resolver()`方法后添加
 
 ```java
-  @Override
-  public Void visitBlockStmt(Stmt.Block stmt) {
+  public Void resolveBlockStmt(Block stmt) {
     beginScope();
     resolve(stmt.statements);
     endScope();
@@ -5376,7 +5231,7 @@ public class Resolver{
 
 这里会开始一个新的作用域，遍历块中的语句，然后丢弃该作用域。有趣的部分都在这些辅助方法中。我们先看一个简单的。
 
-*<u>lox/Resolver.java，在 Resolver()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`Resolver()`方法后添加
 
 ```java
   void resolve(List<Stmt> statements) {
@@ -5388,7 +5243,7 @@ public class Resolver{
 
 它会遍历语句列表，并解析其中每一条语句。它会进一步调用：
 
-*<u>lox/Resolver.java，在 visitBlockStmt()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolveBlockStmt()`方法后添加
 
 ```java
   private void resolve(Stmt stmt) {
@@ -5398,7 +5253,7 @@ public class Resolver{
 
 在此过程中，让我们添加一个后续解析表达式时会用到的重载方法。
 
-*<u>lox/Resolver.java，在 resolve(Stmt stmt)方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolve(Stmt stmt)`方法后添加
 
 ```java
   private void resolve(Expr expr) {
@@ -5406,11 +5261,11 @@ public class Resolver{
   }
 ```
 
-这些方法与解释器中的 `evaluate()`和`execute()`方法类似——它们会反过来将访问者模式应用到语法树节点。
+这些方法与解释器中的 `evaluate()`和`execute()`方法类似—它们会对每个语法树节点进行解析。
 
 真正有趣的部分是围绕作用域的。一个新的块作用域是这样创建的：
 
-*<u>lox/Resolver.java，在 resolve()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolve()`方法后添加
 
 ```java
   private void beginScope() {
@@ -5418,43 +5273,42 @@ public class Resolver{
   }
 ```
 
-词法作用域在解释器和解析器中都有使用。它们的行为像一个栈。解释器是使用链表（Environment对象组成的链）来实现栈的，在解析器中，我们使用一个真正的Java Stack。
+词法作用域在解释器和解析器中都有使用。它们的行为像一个栈。解释器是使用链表（`Environment`对象组成的链）来实现栈的，在解析器中，我们使用一个真正的$Java$的`Stack`类。
 
-*<u>lox/Resolver.java，在 Resolver类中添加：</u>*
+> 在`Resolver.java`文件中，在`Resolver`类中添加
 
 ```java
   private final Interpreter interpreter;
   // 新增部分开始
   private final Stack<Map<String, Boolean>> scopes = new Stack<>();
   // 新增部分结束
-  Resolver(Interpreter interpreter) {
+  public Resolver(Interpreter interpreter) {
 ```
 
-这个字段会记录当前作用域内的栈。栈中的每个元素是代表一个块作用域的Map。与Environment中一样，键是变量名。值是布尔值，原因我很快会解释。
+这个字段会记录当前作用域内的栈。栈中的每个元素是代表一个块作用域的`Map`。与`Environment`中一样，键是变量名。值是布尔值，原因我很快会解释。
 
-作用域栈只用于局部块作用域。解析器不会跟踪在全局作用域的顶层声明的变量，因为它们在Lox中是更动态的。当解析一个变量时，如果我们在本地作用域栈中找不到它，我们就认为它一定是全局的。
+作用域栈只用于局部块作用域。解析器不会跟踪在全局作用域的顶层声明的变量，因为它们在$Atguigu$中是更动态的。当解析一个变量时，如果我们在本地作用域栈中找不到它，我们就认为它一定是全局的。
 
 由于作用域被存储在一个显式的栈中，退出作用域很简单。
 
-<u>*lox/Resolver.java，在 beginScope()方法后添加：*</u>
+> 在`Resolver.java`文件中，在`beginScope()`方法后添加
 
 ```java
   private void endScope() {
-    scopes.pop();
+      scopes.pop();
   }
 ```
 
 现在我们可以在一个栈中压入和弹出一个空作用域，接下来我们往里面放些内容。
 
-### 11.3.2 解析变量声明
+### $9.3.2$ 解析变量声明
 
-解析一个变量声明，会在当前最内层的作用域map中添加一个新的条目。这看起来很简单，但是我们需要做一些小动作。
+解析一个变量声明，会在当前最内层的作用域`Map`中添加一个新的条目。这看起来很简单，但是我们需要做一些小动作。
 
-*<u>lox/Resolver.java，在 visitBlockStmt()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`executeBlockStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitVarStmt(Stmt.Var stmt) {
+  public Void executeVarStmt(Stmt.Var stmt) {
     declare(stmt.name);
     if (stmt.initializer != null) {
       resolve(stmt.initializer);
@@ -5475,7 +5329,7 @@ var a = "outer";
 
 当局部变量的初始化式指向一个与当前声明变量名称相同的变量时，会发生什么？我们有几个选择：
 
-1. **运行初始化式，然后将新的变量放入作用域中**。在这个例子中，新的局部变量`a`会使用“outer”（全局变量`a`的值）初始化。换句话说，前面的声明脱糖后如下：
+1. **运行初始化式，然后将新的变量放入作用域中**。在这个例子中，新的局部变量`a`会使用`"outer"`（全局变量`a`的值）初始化。换句话说，前面的声明脱糖后如下：
 
    ```javascript
    var temp = a; // Run the initializer.
@@ -5492,7 +5346,7 @@ var a = "outer";
 
 3. **在初始化式中引用一个变量是错误的。**如果初始化式使用了要初始化的变量，则解释器在编译时或运行时都会失败。
 
-前两个选项中是否有用户真正*想要*的？变量遮蔽很少见，而且通常是一个错误，所以根据被遮蔽的变量值来初始化一个遮蔽的变量，似乎不太可能是有意为之。
+前两个选项中是否有用户 **真正想要** 的？变量遮蔽很少见，而且通常是一个错误，所以根据被遮蔽的变量值来初始化一个遮蔽的变量，似乎不太可能是有意为之。
 
 第二个选项就更没用了。新变量的值总是`nil`。通过名称来引用没有任何意义。你可以使用一个隐式的`nil`来代替。
 
@@ -5500,7 +5354,7 @@ var a = "outer";
 
 要做到这一点，当我们访问表达式时，我们需要知道当前是否在某个变量的初始化式中。我们通过将绑定拆分为两步来实现。首先是**声明**。
 
-*<u>lox/Resolver.java，在 endScope()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`endScope()`方法后添加
 
 ```java
   private void declare(Token name) {
@@ -5511,33 +5365,32 @@ var a = "outer";
   }
 ```
 
-声明将变量添加到最内层的作用域，这样它就会遮蔽任何外层作用域，我们也就知道了这个变量的存在。我们通过在作用域map中将其名称绑定到`false`来表明该变量“尚未就绪”。作用域map中与key相关联的值代表的是我们是否已经结束了对变量初始化式的解析。
+声明将变量添加到最内层的作用域，这样它就会遮蔽任何外层作用域，我们也就知道了这个变量的存在。我们通过在作用域`Map`中将其名称绑定到`false`来表明该变量“尚未就绪”。作用域`Map`中与$key$相关联的值代表的是我们是否已经结束了对变量初始化式的解析。
 
-在声明完变量后，我们在变量当前存在但是不可用的作用域中解析变量的初始化表达式。一旦初始化表达式完成，变量也就绪了。我们通过**define**来实现。
+在声明完变量后，我们在变量当前存在但是不可用的作用域中解析变量的初始化表达式。一旦初始化表达式完成，变量也就绪了。我们通过`define`来实现。
 
-*<u>lox/Resolver.java，在 declare()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`declare()`方法后添加
 
 ```java
   private void define(Token name) {
-    if (scopes.isEmpty()) return;
-    scopes.peek().put(name.lexeme, true);
+      if (scopes.isEmpty()) return;
+      scopes.peek().put(name.lexeme, true);
   }
 ```
 
-我们在作用域map中将变量的值置为`true`，以标记它已完全初始化并可使用。它有了生命！
+我们在作用域map中将变量的值置为`true`，以标记它已完全初始化并可使用。
 
-### 11.3.3 解析变量表达式
+### $9.3.3$ 解析变量表达式
 
-变量声明——以及我们即将讨论的函数声明——会向作用域map中写数据。在我们解析变量表达式时，需要读取这些map。
+变量声明—以及我们即将讨论的函数声明—会向作用域`Map`中写数据。在我们解析变量表达式时，需要读取这些`Map`。
 
-*<u>lox/Resolver.java，在 visitVarStmt()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`executeVarStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitVariableExpr(Expr.Variable expr) {
+  public Void evaluateVariableExpr(Variable expr) {
     if (!scopes.isEmpty() &&
         scopes.peek().get(expr.name.lexeme) == Boolean.FALSE) {
-      Lox.error(expr.name,
+      Atguigu.error(expr.name,
           "Can't read local variable in its own initializer.");
     }
 
@@ -5546,11 +5399,11 @@ var a = "outer";
   }
 ```
 
-首先，我们要检查变量是否在其自身的初始化式中被访问。这也就是作用域map中的值发挥作用的地方。如果当前作用域中存在该变量，但是它的值是`false`，意味着我们已经声明了它，但是还没有定义它。我们会报告一个错误出来。
+首先，我们要检查变量是否在其自身的初始化式中被访问。这也就是作用域`Map`中的值发挥作用的地方。如果当前作用域中存在该变量，但是它的值是`false`，意味着我们已经声明了它，但是还没有定义它。我们会报告一个错误出来。
 
 在检查之后，我们实际上使用了这个辅助方法来解析变量：
 
-*<u>lox/Resolver.java，在 define()方法后添加：</u>*
+> `Resolver.java`文件中，在`define()`方法后添加
 
 ```java
   private void resolveLocal(Expr expr, Token name) {
@@ -5563,19 +5416,18 @@ var a = "outer";
   }
 ```
 
-这看起来很像是Environment中对变量求值的代码。我们从最内层的作用域开始，向外扩展，在每个map中寻找一个可以匹配的名称。如果我们找到了这个变量，我们就对其解析，传入当前最内层作用域和变量所在作用域之间的作用域的数量。所以，如果变量在当前作用域中找到该变量，则传入0；如果在紧邻的外网作用域中找到，则传1。明白了吧。
+这看起来很像是`Environment`中对变量求值的代码。我们从最内层的作用域开始，向外扩展，在每个`Map`中寻找一个可以匹配的名称。如果我们找到了这个变量，我们就对其解析，传入当前最内层作用域和变量所在作用域之间的作用域的数量。所以，如果变量在当前作用域中找到该变量，则传入`0`；如果在紧邻的外层作用域中找到，则传`1`。
 
-如果我们遍历了所有的作用域也没有找到这个变量，我们就不解析它，并假定它是一个全局变量。稍后我们将讨论`resolve()`方法的实现。现在，让我们继续浏览其他语法节点。
+如果我们遍历了所有的作用域也没有找到这个变量，我们就不解析它，并假定它是一个全局变量。稍后我们将讨论`resolve()`方法的实现。现在，让我们继续遍历其他语法树的节点。
 
-### 11.3.4 解析赋值表达式
+### $9.3.4$ 解析赋值表达式
 
 另一个引用变量的表达式就是赋值表达式。解析方法如下：
 
-*<u>lox/Resolver.java，在 visitVarStmt()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolveVarStmt()`方法后添加
 
-```
-  @Override
-  public Void visitAssignExpr(Expr.Assign expr) {
+```java
+  public Void resolveAssignExpr(Assign expr) {
     resolve(expr.value);
     resolveLocal(expr, expr.name);
     return null;
@@ -5584,15 +5436,14 @@ var a = "outer";
 
 首先，我们解析右值的表达式，以防它还包含对其它变量的引用。然后使用现有的 `resolveLocal()` 方法解析待赋值的变量。
 
-### 11.3.5 解析函数声明
+### $9.3.5$ 解析函数声明
 
 最后是函数。函数既绑定名称又引入了作用域。函数本身的名称被绑定在函数声明时所在的作用域中。当我们进入函数体时，我们还需要将其参数绑定到函数内部作用域中。
 
-*<u>lox/Resolver.java，在 visitBlockStmt()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolveBlockStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitFunctionStmt(Stmt.Function stmt) {
+  public Void visitFunctionStmt(Function stmt) {
     declare(stmt.name);
     define(stmt.name);
 
@@ -5601,14 +5452,14 @@ var a = "outer";
   }
 ```
 
-与`visitVariableStmt()`类似，我们在当前作用域中声明并定义函数的名称。与变量不同的是，我们在解析函数体之前，就急切地定义了这个名称。这样函数就可以在自己的函数体中递归地使用自身。
+与`resolveVariableStmt()`类似，我们在当前作用域中声明并定义函数的名称。与变量不同的是，我们在解析函数体之前，就急切地定义了这个名称。这样函数就可以在自己的函数体中递归地使用自身。
 
 那么我们可以使用下面的方法来解析函数体：
 
-*<u>lox/Resolver.java，在 resolve()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolve()`方法后添加
 
 ```java
-  private void resolveFunction(Stmt.Function function) {
+  private void resolveFunction(Function function) {
     beginScope();
     for (Token param : function.params) {
       declare(param);
@@ -5619,21 +5470,20 @@ var a = "outer";
   }
 ```
 
-这是一个单独的方法，因为我们以后添加类时，还需要使用它来解析Lox方法。它为函数体创建一个新的作用域，然后为函数的每个参数绑定变量。
+这是一个单独的方法，因为我们以后添加类时，还需要使用它来解析$Atguigu$方法。它为函数体创建一个新的作用域，然后为函数的每个参数绑定变量。
 
-一旦就绪，它就会在这个作用域中解析函数体。这与解释器处理函数声明的方式不同。在*运行时*，声明一个函数不会对函数体做任何处理。直到后续函数被调用时，才会触及主体。在*静态*分析中，我们会立即遍历函数体。
+一旦就绪，它就会在这个作用域中解析函数体。这与解释器处理函数声明的方式不同。在 **运行时** ，声明一个函数不会对函数体做任何处理。直到后续函数被调用时，才会触及主体。在 **静态** 分析中，我们会立即遍历函数体。
 
-### 11.3.6 解析其它语法树节点
+### $9.3.6$ 解析其它语法树节点
 
-这涵盖了语法中很多有趣的部分。我们处理了声明、读取、写入遍历，创建、销毁作用域的部分。虽然其它部分不受遍历解析的影响，我们也需要为其它语法树节点提供visit方法，以便递归到它们的子树。抱歉，这部分内容很枯燥，但请耐心听我讲。我们采用“自上而下”的方式，从语句开始。
+这涵盖了语法中很多有趣的部分。我们处理了声明、读取、写入遍历，创建、销毁作用域的部分。虽然其它部分不受遍历解析的影响，我们也需要为其它语法树节点提供解析方法，以便递归到它们的子树。我们采用“自上而下”的方式，从语句开始。
 
 一个表达式语句中包含一个需要遍历的表达式。
 
-*<u>lox/Resolver.java，在 visitBlockStmt()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolveBlockStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitExpressionStmt(Stmt.Expression stmt) {
+  public Void resolveExpressionStmt(Stmt.Expression stmt) {
     resolve(stmt.expression);
     return null;
   }
@@ -5641,11 +5491,10 @@ var a = "outer";
 
 `if`语句包含一个条件表达式，以及一个或两个分支语句。
 
-*<u>lox/Resolver.java，在 visitFunctionStmt()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolveFunctionStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitIfStmt(Stmt.If stmt) {
+  public Void resolveIfStmt(If stmt) {
     resolve(stmt.condition);
     resolve(stmt.thenBranch);
     if (stmt.elseBranch != null) resolve(stmt.elseBranch);
@@ -5653,29 +5502,25 @@ var a = "outer";
   }
 ```
 
-在这里，我们可以看到解析与解释是不同的。当我们解析`if`语句时，没有控制流。我们会解析条件表达式和两个分支表达式。动态执行则只会进入*正在执行*的分支，而静态分析是保守的——它会分析所有*可能执行*的分支。因为任何一个分支在运行时都可能被触及，所以我们要对两者都进行解析。
+在这里，我们可以看到解析与解释是不同的。当我们解析`if`语句时，没有控制流。我们会解析条件表达式和两个分支表达式。动态执行则只会进入 **正在执行** 的分支，而静态分析是保守的—它会分析所有 **可能执行** 的分支。因为任何一个分支在运行时都可能被触及，所以我们要对两者都进行解析。
 
 与表达式语句类似，`print`语句也包含一个子表达式。
 
-*<u>lox/Resolver.java，在 visitIfStmt()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolveIfStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitPrintStmt(Stmt.Print stmt) {
+  public Void resolvePrintStmt(Print stmt) {
     resolve(stmt.expression);
     return null;
   }
 ```
 
-> Same deal for return.
-
 `return`语句也是相同的。
 
-*<u>lox/Resolver.java，在 visitPrintStmt()方法后添加：</u>*
+> 在`Resolver.java`文件中，在`resolvePrintStmt()`方法后添加
 
 ```java
-  @Override
-  public Void visitReturnStmt(Stmt.Return stmt) {
+  public Void resolveReturnStmt(Return stmt) {
     if (stmt.value != null) {
       resolve(stmt.value);
     }
@@ -5779,11 +5624,9 @@ var a = "outer";
   }
 ```
 
-有了这些visit方法，Java编译器应该会认为Resolver完全实现了Stmt.Visitor 和 Expr.Visitor。现在是时候休息一下了。
+## $9.4$ 解释已解析的变量
 
-## 11.4 解释已解析的变量
-
-让我们看看解析器有什么用处。每次访问一个变量时，它都会告诉解释器，在当前作用域和变量定义的作用域之间隔着多少层作用域。在运行时，这正好对应于当前环境与解释器可以找到变量值的外围环境之间的*environments*数量。解析器通过调用下面的方法将这个数字传递给解释器：
+让我们看看解析器有什么用处。每次访问一个变量时，它都会告诉解释器，在当前作用域和变量定义的作用域之间隔着多少层作用域。在运行时，这正好对应于当前环境与解释器可以找到变量值的外围环境之间的`environments`数量。解析器通过调用下面的方法将这个数字传递给解释器：
 
 *<u>lox/Interpreter.java，在 execute()方法后添加：</u>*
 
@@ -5835,7 +5678,7 @@ import java.util.Map;
 class Interpreter implements Expr.Visitor<Object>,
 ```
 
-### 11.4.1 访问已解析的变量
+### $9.4.1$ 访问已解析的变量
 
 我们的解释器现在可以访问每个变量的解析位置。最后，我们可以利用这一点了，将变量表达式的visit方法替换如下：
 
@@ -5891,16 +5734,16 @@ class Interpreter implements Expr.Visitor<Object>,
   }
 ```
 
-该方法在环境链中经过确定的跳数之后，返回对应的环境。一旦我们有了环境，`getAt()`方法就可以直接返回对应环境map中的变量值。甚至不需要检查变量是否存在——我们知道它是存在的，因为解析器之前已经确认过了。
+该方法在环境链中经过确定的跳数之后，返回对应的环境。一旦我们有了环境，`getAt()`方法就可以直接返回对应环境map中的变量值。甚至不需要检查变量是否存在—我们知道它是存在的，因为解析器之前已经确认过了。
 
-### 11.4.2 赋值已解析的变量
+### $9.4.2$ 赋值已解析的变量
 
-我们也可以通过赋值来使用一个变量。赋值表达式对应的visit方法的修改也是类似的。
+我们也可以通过赋值来使用一个变量。赋值表达式对应的解析方法的修改也是类似的。
 
-*<u>lox/Interpreter.java，在 visitAssignExpr()方法中替换一行：</u>*
+> 在`Interpreter.java`文件中，在`resolveAssignExpr()`方法中替换$1$行
 
 ```java
-  public Object visitAssignExpr(Expr.Assign expr) {
+  public Object resolveAssignExpr(Assign expr) {
     Object value = evaluate(expr.value);  
     // 替换部分开始
     Integer distance = locals.get(expr);
@@ -5915,7 +5758,7 @@ class Interpreter implements Expr.Visitor<Object>,
 
 又一次，我们要查找变量的作用域距离。如果没有找到，我们就假定它是全局变量并采用跟之前一样的方式来处理；否则，我们使用下面的新方法：
 
-*<u>lox/Environment.java，在 getAt()方法后添加：</u>*
+> 在`Environment.java`文件中，在`getAt()`方法后添加
 
 ```java
   void assignAt(int distance, Token name, Object value) {
@@ -5927,9 +5770,9 @@ class Interpreter implements Expr.Visitor<Object>,
 
 解释器就只需要做这些调整。这也就是为什么我为解析数据选择了一种侵入性最小的表示方法。其余所有节点都跟之前一样，甚至连修改环境的代码也没有改动。
 
-### 11.4.3 运行解析器
+### $9.4.3$ 运行解析器
 
-不过，我们确实需要*运行*解析器。我们在解析器完成工作之后插入一次解析器处理。
+不过，我们确实需要 **运行** 解析器。我们在解析器完成工作之后插入一次解析器处理。
 
 *<u>lox/Lox.java，在 run()方法中添加代码：</u>*
 
@@ -5947,18 +5790,18 @@ class Interpreter implements Expr.Visitor<Object>,
 
 退一步讲，如果解析器成功了，这么说就是对的。但是如果解析过程中出现错误会怎么办？
 
-## 11.5 解析错误
+## $9.5$ 解析错误
 
-由于我们正在进行语义分析，因此我们有机会使Lox 的语义更加精确，以帮助用户在执行代码之前及早发现错误。看一下下面这个坏代码：
+由于我们正在进行语义分析，因此我们有机会使$Atguigu$的语义更加精确，以帮助用户在执行代码之前及早发现错误。看一下下面这个错误代码：
 
 ```javascript
-fun bad() {
+function bad() {
   var a = "first";
   var a = "second";
 }
 ```
 
-我们确实允许在*全局*作用域内声明多个同名的变量，但在局部作用域内这样做可能是错误的。如果用户知道变量已经存在，就应该使用赋值操作而不是`var`。如果他们不知道变量的存在，他们可能并不想覆盖之前的变量。
+我们确实允许在 **全局** 作用域内声明多个同名的变量，但在局部作用域内这样做可能是错误的。如果用户知道变量已经存在，就应该使用赋值操作而不是`var`。如果他们不知道变量的存在，他们可能并不想覆盖之前的变量。
 
 我们可以在解析的时候静态地检测到这个错误。
 
@@ -5968,7 +5811,7 @@ fun bad() {
     Map<String, Boolean> scope = scopes.peek();
     // 新增部分开始
     if (scope.containsKey(name.lexeme)) {
-      Lox.error(name,
+      Atguigu.error(name,
           "Already variable with this name in this scope.");
     }
     // 新增部分结束
@@ -5977,7 +5820,7 @@ fun bad() {
 
 当我们在局部作用域中声明一个变量时，我们已经知道了之前在同一作用域中声明的每个变量的名字。如果我们看到有冲突，我们就报告一个错误。
 
-### 11.5.1 无效返回错误
+### $9.5.1$ 无效返回错误
 
 这是另一个讨人厌的小脚本：
 
@@ -5985,7 +5828,7 @@ fun bad() {
 return "at top level";
 ```
 
-这里执行了一个`return`语句，但它甚至根本不在函数内部。这是一个顶层代码。我不知道用户认为会发生什么，但是我认为我们不希望Lox允许这种做法。
+这里执行了一个`return`语句，但它甚至根本不在函数内部。这是一个顶层代码。我不知道用户认为会发生什么，但是我认为我们不希望$Atguigu$允许这种做法。
 
 我们可以对解析器进行扩展来静态检测这种错误。就像我们遍历语法树时跟踪作用域一样，我们也可以跟踪当前访问的代码是否在一个函数声明内部。
 
@@ -6029,7 +5872,7 @@ return "at top level";
 ```java
   // 替换部分开始
 	private void resolveFunction(
-      Stmt.Function function, FunctionType type) {
+      Function function, FunctionType type) {
     FunctionType enclosingFunction = currentFunction;
     currentFunction = type;
     // 替换部分结束
@@ -6038,7 +5881,7 @@ return "at top level";
 
 我们先把该字段的旧值存在一个局部变量中。记住，Lox中有局部函数，所以你可以任意深度地嵌套函数声明。我们不仅需要跟踪是否在一个函数内部，还要记录我们在*多少*函数内部。
 
-我们可以使用一个显式的FunctionType值堆栈来进行记录，但我们会借助JVM的力量。我们将前一个值保存在Java堆栈中的一个局部变量。当我们完成函数体的解析之后，我们将该字段恢复为之前的值。
+我们可以使用一个显式的`FunctionType`值堆栈来进行记录，但我们会借助$JVM$的力量。我们将前一个值保存在$Java$堆栈中的一个局部变量。当我们完成函数体的解析之后，我们将该字段恢复为之前的值。
 
 *<u>lox/Resolver.java，在 resolveFunction()方法中添加代码：</u>*
 
@@ -6055,10 +5898,10 @@ return "at top level";
 *<u>lox/Resolver.java，在 visitReturnStmt()方法中添加代码：</u>*
 
 ```java
-  public Void visitReturnStmt(Stmt.Return stmt) {
+  public Void visitReturnStmt(Return stmt) {
     // 新增部分开始
     if (currentFunction == FunctionType.NONE) {
-      Lox.error(stmt.keyword, "Can't return from top-level code.");
+      Atguigu.error(stmt.keyword, "Can't return from top-level code.");
     }
     // 新增部分结束
     if (stmt.value != null) {
@@ -6066,9 +5909,9 @@ return "at top level";
 
 很简洁，对吧？
 
-还有一件事。回到将所有部分整合到一起的主类Lox中，我们很小心，如果遇到任何解析错误就不会运行解释器。这个检查是在解析器*之前*运行的，这样我们就不需要再去尝试解析语法无效的代码。
+还有一件事。回到将所有部分整合到一起的主类`Atguigu`中，我们很小心，如果遇到任何解析错误就不会运行解释器。这个检查是在解析器 **之前** 运行的，这样我们就不需要再去尝试解析语法无效的代码。
 
-但是如果在解析变量时存在错误，也需要跳过解释器，所以我们添加*另一个*检查。
+但是如果在解析变量时存在错误，也需要跳过解释器，所以我们添加 **另一个** 检查。
 
 > 在`Atguigu.java`文件中，在`run()`方法中添加代码
 
