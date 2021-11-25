@@ -352,6 +352,7 @@ private static void runPrompt() throws IOException {
   InputStreamReader input = new InputStreamReader(System.in);
   BufferedReader reader = new BufferedReader(input);
 
+  System.out.println("尚硅谷：让天下没有难学的技术！");
   for (;;) { 
     System.out.print("atguigu> ");
     String line = reader.readLine();
@@ -5238,7 +5239,7 @@ public class Resolver {
 > 在`Resolver.java`文件中，在`Resolver()`方法后添加
 
 ```java
-  void resolve(List<Stmt> statements) {
+  public void resolve(List<Stmt> statements) {
     for (Stmt statement : statements) {
       resolve(statement);
     }
@@ -5251,7 +5252,6 @@ public class Resolver {
 
 ```java
   private void resolve(Stmt stmt) {
-    stmt.accept(this);
   }
 ```
 
@@ -5261,7 +5261,6 @@ public class Resolver {
 
 ```java
   private void resolve(Expr expr) {
-    expr.accept(this);
   }
 ```
 
@@ -5312,7 +5311,7 @@ public class Resolver {
 > 在`Resolver.java`文件中，在`resolveBlockStmt()`方法后添加
 
 ```java
-  public Void resolveVarStmt(Stmt.Var stmt) {
+  public Void resolveVarStmt(Var stmt) {
     declare(stmt.name);
     if (stmt.initializer != null) {
       resolve(stmt.initializer);
@@ -5658,10 +5657,10 @@ public class Interpreter {
 
 我们的解释器现在可以访问每个变量的解析位置。最后，我们可以利用这一点了，将变量表达式的visit方法替换如下：
 
-> 在`Interpreter.java`文件中，在`executeVariableExpr()`方法中替换$1$行
+> 在`Interpreter.java`文件中，在`evaluateVariableExpr()`方法中替换$1$行
 
 ```java
-  public Object visitVariableExpr(Variable expr) {
+  public Object evaluateVariableExpr(Variable expr) {
     // 替换部分开始
     return lookUpVariable(expr.name, expr);
     // 替换部分结束
@@ -5716,10 +5715,10 @@ public class Interpreter {
 
 我们也可以通过赋值来使用一个变量。赋值表达式对应的解析方法的修改也是类似的。
 
-> 在`Interpreter.java`文件中，在`resolveAssignExpr()`方法中替换$1$行
+> 在`Interpreter.java`文件中，在`evaluateAssignExpr()`方法中替换$1$行
 
 ```java
-  public Object resolveAssignExpr(Assign expr) {
+  public Object evaluateAssignExpr(Assign expr) {
     Object value = evaluate(expr.value);  
     // 替换部分开始
     Integer distance = locals.get(expr);
@@ -5885,6 +5884,50 @@ return "at top level";
 
 回到将所有部分整合到一起的主类`Atguigu`中，我们很小心，如果遇到任何解析错误就不会运行解释器。这个检查是在解析器 **之前** 运行的，这样我们就不需要再去尝试解析语法无效的代码。
 
+好，现在我们把解析表达式和解析语句的代码填充一下。
+
+```java
+    private void resolve(Stmt stmt) {
+        if (stmt instanceof Var) {
+            resolveVarStmt((Var) stmt);
+        } else if (stmt instanceof Function) {
+            resolveFunctionStmt((Function) stmt);
+        } else if (stmt instanceof Expression) {
+            resolveExpressionStmt((Expression) stmt);
+        } else if (stmt instanceof If) {
+            resolveIfStmt((If) stmt);
+        } else if (stmt instanceof Print) {
+            resolvePrintStmt((Print) stmt);
+        } else if (stmt instanceof Return) {
+            resolveReturnStmt((Return) stmt);
+        } else if (stmt instanceof While) {
+            resolveWhileStmt((While) stmt);
+        } else if (stmt instanceof Block) {
+            resolveBlockStmt((Block) stmt);
+        }
+    }
+
+    private void resolve(Expr expr) {
+        if (expr instanceof Variable) {
+            resolveVariableExpr((Variable) expr);
+        } else if (expr instanceof Binary) {
+            resolveBinaryExpr((Binary) expr);
+        } else if (expr instanceof Unary) {
+            resolveUnaryExpr((Unary) expr);
+        } else if (expr instanceof Logical) {
+            resolveLogicalExpr((Logical) expr);
+        } else if (expr instanceof Literal) {
+            resolveLiteralExpr((Literal) expr);
+        } else if (expr instanceof Assign) {
+            resolveAssignExpr((Assign) expr);
+        } else if (expr instanceof Call) {
+            resolveCallExpr((Call) expr);
+        } else if (expr instanceof Grouping) {
+            resolveGroupingExpr((Grouping) expr);
+        }
+    }
+```
+
 但是如果在解析变量时存在错误，也需要跳过解释器，所以我们添加 **另一个** 检查。
 
 > 在`Atguigu.java`文件中，在`run()`方法中添加代码
@@ -5897,3 +5940,4 @@ return "at top level";
     // 新增部分结束
     interpreter.interpret(statements);
 ```
+
