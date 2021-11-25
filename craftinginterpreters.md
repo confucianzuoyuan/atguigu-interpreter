@@ -776,7 +776,7 @@ private void scanToken() {
   }
 ```
 
-这有点像`advance()`方法，只是不会消费字符。这就是所谓的**lookahead(前瞻)**。因为它只关注当前未消费的字符，所以我们有 **一个前瞻字符** 。一般来说，数字越小，扫描器运行速度就越快。词法语法的规则决定了我们需要前瞻多少字符。幸运的是，大多数广泛使用的语言只需要提前一到两个字符。
+这有点像`advance()`方法，只是不会消费字符。这就是所谓的$lookahead$（前瞻）。因为它只关注当前未消费的字符，所以我们有**一个前瞻字符** 。一般来说，数字越小，扫描器运行速度就越快。词法语法的规则决定了我们需要前瞻多少字符。幸运的是，大多数广泛使用的语言只需要提前一到两个字符。
 
 注释是词素，但是它们没有含义，而且解析器也不想要处理它们。所以，我们达到注释末尾后，**不会** 调用`addToken()`方法。当我们循环处理下一个词素时，`start`已经被重置了，注释的词素就消失了。
 
@@ -946,7 +946,7 @@ case 'o':
   break;
 ```
 
-考虑一下，如果用户将变量命名为`orchid`会发生什么？扫描器会先看到前面的两个字符，然后立刻生成一个`or`标记。这就涉及到了一个重要原则，叫作**maximal munch**（最长匹配）。当两个语法规则都能匹配扫描器正在处理的一大块代码时，**哪个规则相匹配的字符最多，就使用哪个规则** 。
+考虑一下，如果用户将变量命名为`orchid`会发生什么？扫描器会先看到前面的两个字符，然后立刻生成一个`or`标记。这就涉及到了一个重要原则，叫作$maximal \; munch$（最长匹配）。当两个语法规则都能匹配扫描器正在处理的一大块代码时，**哪个规则相匹配的字符最多，就使用哪个规则** 。
 
 该规则规定，如果我们可以将`orchid`匹配为一个标识符，也可以将`or`匹配为一个关键字，那就采用第一种结果。这也就是为什么我们在前面会默认为，`<=`应该识别为单一的`<=`标记，而不是`<`后面跟了一个`=`。
 
@@ -2270,7 +2270,7 @@ public class Interpreter {
 > 在`Interpreter.java`文件中，在`Interpreter`类中添加
 
 ```java
-  private Object evaluate(Expr expr) {
+    private Object evaluate(Expr expr) {
         if (expr instanceof Literal) {
             return evaluateLiteralExpr((Literal) expr);
         } else if (expr instanceof Grouping) {
@@ -4623,7 +4623,18 @@ count(3);
 
 假设一下，如果我们在最内层的嵌套调用中即将打印$1$的时候暂停了解释器。打印$2$和$3$的外部调用还没有打印出它们的值，所以在内存的某个地方一定有环境仍然存储着这样的数据：$n$在一个上下文中被绑定到$3$，在另一个上下文中被绑定到$2$，而在最内层调用中绑定为$1$，比如：
 
-![A separate environment for each recursive call.](10.函数/recursion.png)
+```mermaid
+flowchart TB
+	subgraph AA["count(3)"]
+		A["n"] --> B["3"]
+	end
+	subgraph BB["count(2)"]
+		C["n"] --> D["2"]
+	end
+	subgraph CC["count(1)"]
+		E["n"] --> F["1"]
+	end
+```
 
 这就是为什么我们在每次 **调用** 时创建一个新的环境，而不是在函数声明时创建。我们前面看到的`call()`方法就是这样做的。在调用开始的时候，它创建了一个新环境。然后它以同步的方式遍历形参和实参列表。对于每一对参数，它用形参的名字创建一个新的变量，并将其与实参的值绑定。
 
@@ -4639,7 +4650,21 @@ add(1, 2, 3);
 
 在调用`add()`时，解释器会创建类似下面这样的内容：
 
-![Binding arguments to their parameters.](10.函数/binding.png)
+```
+function add(a, b, c) {...}
+             |  |  |
+             |  |  |
+             v  v  v
+         add(1, 2, 3)
+```
+
+而环境中的内容如下：
+
+| 形式参数 |               | 实际参数 |
+| -------- | ------------- | -------- |
+| `a`      | $\rightarrow$ | `1`      |
+| `b`      | $\rightarrow$ | `2`      |
+| `c`      | $\rightarrow$ | `3`      |
 
 然后`call()`会告诉解释器在这个新的函数局部环境中执行函数体。在此之前，当前环境是函数被调用的位置所处的环境。现在，我们转入了为函数创建的新的参数空间中。
 
@@ -4959,13 +4984,33 @@ counter(); // "2".
 
 如果你以前从未遇到过带有嵌套函数的语言，那么这可能看起来很疯狂，但用户确实希望它能工作。唉，如果你现在运行它，当`count()`的函数体试图查找`i`时，会在对`counter()`的调用中得到一个未定义的变量错误，这是因为当前的环境链看起来像是这样的：
 
-![The environment chain from count()'s body to the global scope.](10.函数/global.png)
+```mermaid
+flowchart BT
+	subgraph AA["全局环境"]
+		A["makeCount"] --> B["<函数 makeCount>"]
+		C["counter"] --> D["<函数 count>"]
+	end
+	subgraph BB["count()函数体的环境"]
+		E["空环境"]
+	end
+	BB --> |"parent"| AA
+```
 
 当我们调用`count()`时（通过`counter`中保存的引用），我们会为函数体创建一个新的空环境，它的父环境就是全局环境。我们丢失了`i`所在的`makeCounter()`环境。
 
 我们把时间往回拨一点。我们在`makeCounter()`的函数体中声明`count()`时，环境链的样子是下面这样：
 
-![The environment chain inside the body of makeCounter().](10.函数/body.png)
+```mermaid
+flowchart BT
+	subgraph AA["全局环境"]
+		A["makeCount"] --> B["<函数 makeCount>"]
+		C["counter"] --> D["<函数 count>"]
+	end
+	subgraph BB["makeCounter()函数体的环境"]
+		E["i"] --> F["0"]
+	end
+	BB --> |"parent"| AA
+```
 
 所以，在函数声明的地方，我们可以看到`i`。但是当我们从 `makeCounter()` 返回并退出其主体时，解释器会丢弃这个环境。因为解释器不会保留`count()` 外围的环境，所以要靠函数对象本身来保存它。
 
@@ -5019,7 +5064,21 @@ counter(); // "2".
 
 这样就创建了一个环境链，从函数体开始，经过函数被声明的环境，然后到全局作用域。运行时环境链与源代码的文本嵌套相匹配，跟我们想要的一致。当我们调用该函数时，最终的结果是这样的：
 
-![The environment chain with the closure.](10.函数/closure.png)
+```mermaid
+flowchart BT
+	subgraph AA["全局环境"]
+		A["makeCount"] --> B["<函数 makeCount>"]
+		C["counter"] --> D["<函数 count>"]
+	end
+	subgraph BB["makeCounter()函数体的环境"]
+		E["i"] --> F["0"]
+		G["count"] --> H["<函数 count>"]
+	end
+	subgraph CC["count()函数体的环境"]
+		I["空环境"]
+	end
+	CC --> |parent| BB --> |parent| AA
+```
 
 如你所见，现在解释器可以在需要的时候找到`i`，因为它在环境链中。现在尝试运行`makeCounter()`的例子，起作用了！ 
 
@@ -5107,33 +5166,91 @@ block
 
 让我们通过这个有问题的例子，看看每一步的环境是什么样的。首先，我们在全局作用域内声明`a`。
 
-![The global environment with 'a' defined in it.](11.解析和绑定/environment-1.png)
+```mermaid
+flowchart TB
+	subgraph A["全局环境"]
+		B["a"] --> C["#quot;global#quot;"]
+	end
+```
 
 这为我们提供了一个环境，其中只有一个变量。然后我们进入代码块，并执行`showA()`的声明。
 
-![A block environment linking to the global one.](11.解析和绑定/environment-2.png)
+```mermaid
+flowchart RL
+	subgraph AA["全局环境"]
+		B["a"] --> C["#quot;global#quot;"]
+	end
+	subgraph BB["块环境"]
+		D["showA"]
+	end
+	subgraph CC["showA[AtguiguFunction]"]
+		E["closure"]
+	end
+	BB --> AA
+	BB --> CC
+	CC --> BB
+```
 
-我们得到一个对应该代码块的新环境。在这个环境中，我们声明了一个名称`showA`，它绑定到为表示函数而创建的`AtguiguFunction`对象。该对象中有一个`closure`字段，用于捕获函数声明时的环境，因此它有一个指向该代码块环境的引用。
+我们得到一个代码块的新环境。在这个环境中，我们声明了一个名称`showA`，它绑定到为表示函数而创建的`AtguiguFunction`对象。该对象中有一个`closure`字段，用于捕获函数声明时的环境，因此它有一个指向该代码块环境的引用。
 
 现在我们调用`showA()`。
 
-![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the global environment.](11.解析和绑定/environment-3.png)
+```mermaid
+flowchart RL
+	subgraph AA["全局环境"]
+		B["a"] --> C["#quot;global#quot;"]
+	end
+	subgraph BB["块环境"]
+		D["showA"] --> F["<函数 showA>"]
+	end
+	subgraph CC["showA()函数体的环境"]
+		E["空环境"]
+	end
+	BB --> AA
+	CC --> BB
+	G["在全局环境中找到了a的定义"] --> AA
+```
 
 解释器为`showA()`的函数体动态地创建了一个新环境。它是空的，因为该函数没有声明任何变量。该环境的父环境是该函数的闭包—外部的代码块环境。
 
-在`showA()`函数体中，输出`a`的值。解释器通过遍历环境链来查找这个值。它会一直到达全局环境，在其中找到变量`a`并打印`"global"`。太好了。
+在`showA()`函数体中，输出`a`的值。解释器通过遍历环境链来查找这个值。它会一直到达全局环境，在其中找到变量`a`并打印`"global"`。
 
 接下来，我们声明第二个`a`，这次是在代码块内。
 
-![The block environment has both 'a' and 'showA' now.](11.解析和绑定/environment-4.png)
+```mermaid
+flowchart RL
+	subgraph AA["全局环境"]
+		B["a"] --> C["#quot;global#quot;"]
+	end
+	subgraph BB["块环境"]
+		D["showA"] --> F["<函数 showA>"]
+		E["a"] --> G["#quot;block#quot;"]
+	end
+	BB --> AA
+```
 
 它和`showA()`在同一个代码块中—同一个作用域，所以它进入了同一个环境，也就是`showA()`的闭包所指向的环境。这就是有趣的地方了。我们再次调用`showA()`。
 
-![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the block environment.](11.解析和绑定/environment-5.png)
+```mermaid
+flowchart RL
+	subgraph AA["全局环境"]
+		B["a"] --> C["#quot;global#quot;"]
+	end
+	subgraph BB["块环境"]
+		D["showA"] --> F["<函数 showA>"]
+		E["a"] --> G["#quot;block#quot;"]
+	end
+	BB --> AA
+	H["在块环境中找到了a的定义"] --> BB
+	subgraph CC["showA()函数体的环境"]
+		I["空环境"]
+	end
+	CC --> BB
+```
 
 我们再次为`showA()`的函数体创建了一个新的空环境，将其连接到该闭包，并运行函数体。当解释器遍历环境链去查找`a`时，它会发现代码块环境中新的变量`a`。
 
-我选择了一种实现环境的方式，希望它能够与我们对作用域的非正式直觉相一致。我们倾向于认为一个块中的所有代码在同一个作用域中，所以我们的解释器使用了一个环境来表示它。每个环境都是一个可变的哈希表。当一个新的局部变量被声明时，它会被加入该作用域的现有环境中。
+我选择了一种实现环境的方式，希望它能够与我们对作用域的直觉相一致。我们倾向于认为一个块中的所有代码在同一个作用域中，所以我们的解释器使用了一个环境来表示它。每个环境都是一个可变的哈希表。当一个新的局部变量被声明时，它会被加入该作用域的现有环境中。
 
 就像生活中的很多直觉一样，这种直觉并不完全正确。一个代码块并不一定都是同一个作用域。考虑一下：
 
@@ -5162,11 +5279,40 @@ block
 
 而我们将以最充分利用现有`Environment`类的方式来存储解析结果。回想一下，在有问题的例子中，`a`的访问是如何被解释的。
 
-![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the global environment.](http://craftinginterpreters.com/image/resolving-and-binding/environment-3.png)
+```mermaid
+flowchart RL
+	subgraph AA["全局环境"]
+		B["a"] --> C["#quot;global#quot;"]
+	end
+	subgraph BB["块环境"]
+		D["showA"] --> F["<函数 showA>"]
+	end
+	subgraph CC["showA()函数体的环境"]
+		E["空环境"]
+	end
+	BB --> AA
+	CC --> BB
+	G["在全局环境中找到了a的定义"] --> AA
+```
 
 在第一次（正确的）求值中，我们会检查链中的环境，并找到`a`的全局声明。然后，当内部的`a`在块作用域中声明时，它会遮蔽全局的变量`a`。
 
-![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the block environment.](http://craftinginterpreters.com/image/resolving-and-binding/environment-5.png)
+```mermaid
+flowchart RL
+	subgraph AA["全局环境"]
+		B["a"] --> C["#quot;global#quot;"]
+	end
+	subgraph BB["块环境"]
+		D["showA"] --> F["<函数 showA>"]
+		E["a"] --> G["#quot;block#quot;"]
+	end
+	BB --> AA
+	H["在块环境中找到了a的定义"] --> BB
+	subgraph CC["showA()函数体的环境"]
+		I["空环境"]
+	end
+	CC --> BB
+```
 
 下一次查找会遍历环境链，在第二个环境中找到`a`并停止。每个环境都对应于一个声明变量的词法作用域。如果我们能够保证变量查找总是在环境链上遍历相同数量的链接，也就可以保证每次都可以在相同的作用域中找到相同的变量。
 
