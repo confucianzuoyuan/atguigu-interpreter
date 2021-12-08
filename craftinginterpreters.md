@@ -3133,6 +3133,33 @@ public class Variable extends Expr {
   }
 ```
 
+我们这里的解析器需要做一个同步`synchronize`操作。代码如下：
+
+```java
+private void synchronize() {
+  advance();
+
+  while (!isAtEnd()) {
+    if (previous().type == SEMICOLON) return;
+
+    switch (peek().type) {
+      case FUNCTION:
+      case VAR:
+      case FOR:
+      case IF:
+      case WHILE:
+      case PRINT:
+      case RETURN:
+        return;
+    }
+
+    advance();
+  }
+}
+```
+
+这个同步操作会将标记同步到行首。
+
 你还记得前面的章节中，我们建立了一个进行错误恢复的框架吗？现在我们终于可以用起来了。
 
 当我们解析块或脚本中的 一系列语句时， `declaration()` 方法会被重复调用。因此当解析器进入恐慌模式时，它就是进行同步的正确位置。该方法的整个主体都封装在一个try块中，以捕获解析器开始错误恢复时抛出的异常。这样可以让解析器跳转到解析下一个语句或声明的开头。
