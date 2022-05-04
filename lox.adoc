@@ -311,3 +311,406 @@ int main(int argc, const char* argv[]) {
   freeChunk(&chunk);
 ----
 <1> 对块 `chunk` 反汇编
+
+由于反汇编的功能主要用于debug，也就是说如果没有反汇编功能，也不影响虚拟机的执行。但对虚拟机代码的编写至关重要，因为方便我们的调试。所以我们把反汇编的功能都放在debug模块中。
+
+.main.c
+[source,c,highlight=2]
+----
+#include "chunk.h"
+#include "debug.h" // <1>
+
+int main(int argc, const char* argv[]) {
+----
+<1> 引入头文件
+
+在下面的代码中定义反汇编的接口。
+
+.debug.h, create new file
+[source,c]
+----
+#ifndef clox_debug_h
+#define clox_debug_h
+
+#include "chunk.h"
+
+void disassembleChunk(Chunk* chunk, const char* name);
+int disassembleInstruction(Chunk* chunk, int offset);
+
+#endif
+----
+
+然后实现接口。
+
+.debug.c, create new file
+[source,c]
+----
+#include <stdio.h>
+
+#include "debug.h"
+
+void disassembleChunk(Chunk* chunk, const char* name) {
+  printf("== %s ==\n", name);
+
+  for (int offset = 0; offset < chunk->count;) {
+    offset = disassembleInstruction(chunk, offset);
+  }
+}
+----
+
+.debug.c, add after disassembleChunk()
+[source,c]
+----
+int disassembleInstruction(Chunk* chunk, int offset) {
+  printf("%04d ", offset);
+
+  uint8_t instruction = chunk->code[offset];
+  switch (instruction) {
+    case OP_RETURN:
+      return simpleInstruction("OP_RETURN", offset);
+    default:
+      printf("Unknown opcode %d\n", instruction);
+      return offset + 1;
+  }
+}
+----
+
+.debug.c, add after disassembleChunk()
+[source,c]
+----
+static int simpleInstruction(const char* name, int offset) {
+  printf("%s\n", name);
+  return offset + 1;
+}
+----
+
+----
+== test chunk ==
+0000 OP_RETURN
+----
+
+=== 常量
+
+==== 如何表示值
+
+.value.h, create new file
+[source,c]
+----
+#ifndef clox_value_h
+#define clox_value_h
+
+#include "common.h"
+
+typedef double Value; // <1>
+
+#endif
+----
+<1> 这行代码可以看出来Lox的值在C语言层面是如何表示的。
+
+==== 值的数组
+
+常量池其实就是一个元素为常量的数组。以下代码是常量池的结构体定义。
+
+.value.h
+[source,c,highlight=2..7]
+----
+typedef double Value;
+
+typedef struct {
+  int capacity;
+  int count;
+  Value* values;
+} ValueArray;
+
+#endif
+----
+
+定义一些常量池数组的接口。
+
+.value.h, add after struct ValueArray
+[source,c,highlight=2..5]
+----
+} ValueArray;
+
+void initValueArray(ValueArray* array);
+void writeValueArray(ValueArray* array, Value value);
+void freeValueArray(ValueArray* array);
+
+#endif
+----
+
+实现初始化一个空的常量池的接口。
+
+.value.c, create new file
+[source,c]
+----
+#include <stdio.h>
+
+#include "memory.h"
+#include "value.h"
+
+void initValueArray(ValueArray* array) {
+  array->values = NULL;
+  array->capacity = 0;
+  array->count = 0;
+}
+----
+
+实现将一个值添加到常量池的接口。
+
+.value.c, add after initValueArray()
+[source,c]
+----
+void writeValueArray(ValueArray* array, Value value) {
+  if (array->capacity < array->count + 1) {
+    int oldCapacity = array->capacity;
+    array->capacity = GROW_CAPACITY(oldCapacity);
+    array->values = GROW_ARRAY(Value, array->values,
+                               oldCapacity, array->capacity);
+  }
+
+  array->values[array->count] = value;
+  array->count++;
+}
+----
+
+实现销毁旧的常量池并创建一个新的空常量池的接口。
+
+.value.c, add after writeValueArray()
+[source,c]
+----
+void freeValueArray(ValueArray* array) {
+  FREE_ARRAY(Value, array->values, array->capacity);
+  initValueArray(array);
+}
+----
+
+在chunk结构体中添加一个常量池字段。
+
+.chunk.h, in struct Chunk
+[source,c,highlight=2]
+----
+  uint8_t* code;
+  ValueArray constants;
+} Chunk;
+----
+
+不要忘记引入头文件。
+
+.chunk.h
+[source,c,highlight=2]
+----
+#include "common.h"
+#include "value.h"
+
+typedef enum {
+----
+
+在初始化字节码块的代码中添加初始化常量池的操作。
+
+.chunk.c, in initChunk()
+[source,c,highlight=2]
+----
+  chunk->code = NULL;
+  initValueArray(&chunk->constants);
+}
+----
+
+在销毁字节码块的代码中添加销毁常量池的操作。
+
+.chunk.c, in freeChunk()
+[source,c,highlight=2]
+----
+  FREE_ARRAY(uint8_t, chunk->code, chunk->capacity);
+  freeValueArray(&chunk->constants);
+  initChunk(chunk);
+----
+
+定义向字节码块chunk中的常量池添加值的接口。
+
+.chunk.h, add after writeChunk()
+[source,c,highlight=2]
+----
+void writeChunk(Chunk* chunk, uint8_t byte);
+int addConstant(Chunk* chunk, Value value);
+
+#endif
+----
+
+将值添加到常量池数组中，然后返回添加的值在数组中的索引。
+
+.chunk.c, add after writeChunk()
+[source,c]
+----
+int addConstant(Chunk* chunk, Value value) {
+  writeValueArray(&chunk->constants, value);
+  return chunk->constants.count - 1;
+}
+----
+
+==== 常量指令
+
+.chunk.h, in enum OpCode
+[source,c,highlight=2]
+----
+typedef enum {
+  OP_CONSTANT,
+  OP_RETURN,
+----
+
+.main.c, in main()
+[source,c,highlight=2..6]
+----
+  initChunk(&chunk);
+
+  int constant = addConstant(&chunk, 1.2);
+  writeChunk(&chunk, OP_CONSTANT);
+  writeChunk(&chunk, constant);
+
+  writeChunk(&chunk, OP_RETURN);
+----
+
+.debug.c, in disassembleInstruction()
+[source,c,highlight=2..3]
+----
+  switch (instruction) {
+    case OP_CONSTANT:
+      return constantInstruction("OP_CONSTANT", chunk, offset);
+    case OP_RETURN:
+----
+
+.debug.c, add after disassembleChunk()
+[source,c]
+----
+static int constantInstruction(const char* name, Chunk* chunk,
+                               int offset) {
+  uint8_t constant = chunk->code[offset + 1];
+  printf("%-16s %4d '", name, constant);
+  printValue(chunk->constants.values[constant]);
+  printf("'\n");
+}
+----
+
+.debug.c
+[source,c,highlight=2]
+----
+#include "debug.h"
+#include "value.h"
+
+void disassembleChunk(Chunk* chunk, const char* name) {
+----
+
+.value.h, add after freeValueArray()
+[source,c,highlight=2]
+----
+void freeValueArray(ValueArray* array);
+void printValue(Value value);
+
+#endif
+----
+
+.value.c, add after freeValueArray()
+[source,c]
+----
+void printValue(Value value) {
+  printf("%g", value);
+}
+----
+
+.debug.c, in constantInstruction()
+[source,c,highlight=2]
+----
+  printf("'\n");
+  return offset + 2;
+}
+----
+
+.chunk.h, in struct Chunk
+[source,c,highlight=2]
+----
+  uint8_t* code;
+  int* lines;
+  ValueArray constants;
+----
+
+.chunk.c, in initChunk()
+[source,c,highlight=2]
+----
+  chunk->code = NULL;
+  chunk->lines = NULL;
+  initValueArray(&chunk->constants);
+----
+
+.chunk.c, in freeChunk()
+[source,c,highlight=2]
+----
+  FREE_ARRAY(uint8_t, chunk->code, chunk->capacity);
+  FREE_ARRAY(int, chunk->lines, chunk->capacity);
+  freeValueArray(&chunk->constants);
+----
+
+.chunk.h, function writeChunk(), replace 1 line
+[source,c,highlight=2]
+----
+void freeChunk(Chunk* chunk);
+void writeChunk(Chunk* chunk, uint8_t byte, int line);
+int addConstant(Chunk* chunk, Value value);
+----
+
+.chunk.c, function writeChunk(), replace 1 line
+[source,c,highlight=1]
+----
+void writeChunk(Chunk* chunk, uint8_t byte, int line) {
+  if (chunk->capacity < chunk->count + 1) {
+----
+
+.chunk.c, in writeChunk()
+[source,c,highlight=3..4]
+----
+    chunk->code = GROW_ARRAY(uint8_t, chunk->code,
+        oldCapacity, chunk->capacity);
+    chunk->lines = GROW_ARRAY(int, chunk->lines,
+        oldCapacity, chunk->capacity);
+  }
+----
+
+.chunk.c, in writeChunk()
+[source,c,highlight=2]
+----
+  chunk->code[chunk->count] = byte;
+  chunk->lines[chunk->count] = line;
+  chunk->count++;
+----
+
+.main.c, in main(), replace 4 lines
+[source,c,highlight=2..5]
+----
+  int constant = addConstant(&chunk, 1.2);
+  writeChunk(&chunk, OP_CONSTANT, 123);
+  writeChunk(&chunk, constant, 123);
+
+  writeChunk(&chunk, OP_RETURN, 123);
+
+  disassembleChunk(&chunk, "test chunk");
+----
+
+.debug.c, in disassembleInstruction()
+[source,c,highlight=3..8]
+----
+int disassembleInstruction(Chunk* chunk, int offset) {
+  printf("%04d ", offset);
+  if (offset > 0 &&
+      chunk->lines[offset] == chunk->lines[offset - 1]) {
+    printf("   | ");
+  } else {
+    printf("%4d ", chunk->lines[offset]);
+  }
+
+  uint8_t instruction = chunk->code[offset];
+----
+
+----
+== test chunk ==
+0000  123 OP_CONSTANT         0 '1.2'
+0002    | OP_RETURN
+----
