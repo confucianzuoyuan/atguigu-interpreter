@@ -5,7 +5,73 @@
 :toc: left
 :sectnums:
 :scripts: cjk
- 
+
+== 词法分析
+
+.main.c, create new file
+[source,c]
+----
+int main(int argc, const char* argv[]) {
+  if (argc == 1) {
+    repl();
+  } else if (argc == 2) {
+    runFile(argv[1]);
+  } else {
+    fprintf(stderr, "Usage: clox [path]\n");
+    exit(64);
+  }
+
+  return 0;
+}
+----
+
+.main.c, add to top of file
+[source,c]
+----
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+----
+
+.scanner.h, create new file
+[source,c]
+----
+#ifndef clox_scanner_h
+#define clox_scanner_h
+
+void initScanner(const char* source);
+
+#endif
+----
+
+.scanner.c, create new file
+[source,c]
+----
+#include <stdio.h>
+#include <string.h>
+
+#include "scanner.h"
+
+typedef struct {
+  const char* start;
+  const char* current;
+  int line;
+} Scanner;
+
+Scanner scanner;
+----
+
+.scanner.c, add after variable scanner
+[source,c]
+----
+void initScanner(const char* source) {
+  scanner.start = source;
+  scanner.current = source;
+  scanner.line = 1;
+}
+----
+
 == 字节码块
 
 [quote,高德纳]
@@ -550,12 +616,22 @@ int addConstant(Chunk* chunk, Value value) {
 
 ==== 常量指令
 
+让我们添加一条新的指令 `OP_CONSTANT`
+
 .chunk.h, in enum OpCode
 [source,c,highlight=2]
 ----
 typedef enum {
   OP_CONSTANT,
   OP_RETURN,
+----
+
+以下代码所生成的字节码块如下：
+
+----
+OP_CONSTANT
+1.2在常量池中的索引
+OP_RETURN
 ----
 
 .main.c, in main()
