@@ -11,6 +11,18 @@ static Node* term();
 static Node* factor();
 static Node* unary();
 static Node* primary();
+static Node* statement();
+static Node* printStatement();
+static Node* expressionStatement();
+static Node* declaration();
+static Node* varDeclaration();
+static Node* ifStatement();
+static Node* whileStatement();
+static Node* forStatement();
+static Node* or();
+static Node* and();
+static Node* assignment();
+static Node* block();
 
 typedef struct {
   Token current;
@@ -115,8 +127,211 @@ static Node* new_literal(NodeKind kind, char* str, double value) {
   return node;
 }
 
+static Node* new_var(NodeKind kind, char* name, Node* rhs) {
+  Node* node = new_node(kind);
+  node->str = name;
+  node->rhs = rhs;
+  return node;
+}
+
+static Node* new_if(NodeKind kind, Node* condition, Node* thenBranch, Node* elseBranch) {
+  Node* node = new_node(kind);
+  node->cond = condition;
+  node->then = thenBranch;
+  node->els = elseBranch;
+  return node;
+}
+
+static Node* new_while(Node* condition, Node* body) {
+  Node* node = new_node(ND_STMT_WHILE);
+  node->cond = condition;
+  node->body = body;
+  return node;
+}
+
+static Node* new_assign(char* name, Node* rhs) {
+  Node* node = new_node(ND_EXPR_ASSIGN);
+  node->str = name;
+  node->rhs = rhs;
+  return node;
+}
+
+static Node* statement() {
+  if (match(TOKEN_FOR)) return forStatement();
+  if (match(TOKEN_IF)) return ifStatement();
+  if (match(TOKEN_PRINT)) return printStatement();
+  if (match(TOKEN_WHILE)) return whileStatement();
+  if (match(TOKEN_LEFT_BRACE)) return new_unary(ND_STMT_BLOCK, block());
+
+  return expressionStatement();
+}
+
+static Node* block() {
+  Node head = {};
+  Node* dummy = &head;
+  while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+    dummy->next = declaration();
+    dummy = dummy->next;
+  }
+
+  consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
+  return head.next;
+}
+
+static Node* ifStatement() {
+  consume(TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+  Node* condition = expression();
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after if condition.");
+
+  Node* thenBranch = statement();
+  Node* elseBranch = NULL;
+  if (match(TOKEN_ELSE)) {
+    elseBranch = statement();
+  }
+
+  return new_if(ND_STMT_IF, condition, thenBranch, elseBranch);
+}
+
+static Node* whileStatement() {
+  consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
+  Node* condition = expression();
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+  Node* body = statement();
+
+  return new_while(condition, body);
+}
+
+static Node* forStatement() {
+  consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
+
+  Node* initializer = NULL;
+  if (match(TOKEN_SEMICOLON)) {
+    initializer = NULL;
+  } else if (match(TOKEN_VAR)) {
+    initializer = varDeclaration();
+  } else {
+    initializer = expressionStatement();
+  }
+
+  Node* condition = NULL;
+  if (!check(TOKEN_SEMICOLON)) {
+    condition = expression();
+  }
+  consume(TOKEN_SEMICOLON, "Expect ';' after loop condition.");
+
+  Node* increment = NULL;
+  if (!check(TOKEN_RIGHT_PAREN)) {
+    increment = expression();
+  }
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after for clauses.");
+
+  Node* body = statement();
+
+  if (increment != NULL) {
+    body->next = new_unary(ND_STMT_EXPRESSION, increment);
+  }
+
+  if (condition == NULL) {
+    condition = new_literal(ND_EXPR_TRUE, NULL, 0.0);
+  }
+  body = new_while(condition, body);
+
+  if (initializer != NULL) {
+    initializer->next = body;
+    body = new_unary(ND_STMT_BLOCK, initializer);
+  }
+
+  return body;
+}
+
+static Node* printStatement() {
+  Node* value = expression();
+  consume(TOKEN_SEMICOLON, "Expect ';' after value.");
+  return new_unary(ND_STMT_PRINT, value);
+}
+
+static Node* returnStatement() {
+  Node* value = NULL;
+  if (!check(TOKEN_SEMICOLON)) {
+    value = expression();
+  }
+
+  consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
+  return new_unary(ND_STMT_RETURN, value);
+}
+
+static Node* expressionStatement() {
+  Node* expr = expression();
+  consume(TOKEN_SEMICOLON, "Expect ';' after expression.");
+  return new_unary(ND_STMT_EXPRESSION, expr);
+}
+
+static Node* declaration() {
+  if (match(TOKEN_VAR)) return varDeclaration();
+
+  return statement();
+}
+
+static Node* varDeclaration() {
+  consume(TOKEN_IDENTIFIER, "Expect variable name.");
+  char* name = copyString(parser.previous.start,
+                          parser.previous.length);
+
+  Node* initializer = NULL;
+  if (match(TOKEN_EQUAL)) {
+    initializer = expression();
+  }
+
+  consume(TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
+  return new_var(ND_STMT_VAR, name, initializer);
+}
+
 static Node* expression() {
-  return equality();
+  return assignment();
+}
+
+static Node* assignment() {
+  Node* expr = or();
+
+  if (match(TOKEN_EQUAL)) {
+    Node* value = assignment();
+
+    if (expr->kind == ND_EXPR_VARIABLE) {
+      return new_assign(expr->str, value);
+    }
+
+    error("Invalid assignment target.");
+  }
+
+  return expr;
+}
+
+static Node* or() {
+  Node* expr = and();
+
+  for (;;) {
+    if (match(TOKEN_OR)) {
+      Node* right = and();
+      expr = new_binary(expr, ND_EXPR_OR, right);
+      continue;
+    }
+
+    return expr;
+  }
+}
+
+static Node* and() {
+  Node* expr = equality();
+
+  for (;;) {
+    if (match(TOKEN_AND)) {
+      Node* right = equality();
+      expr = new_binary(expr, ND_EXPR_AND, right);
+      continue;
+    }
+
+    return expr;
+  }
 }
 
 static Node* equality() {
@@ -231,7 +446,13 @@ static Node* primary() {
   if (match(TOKEN_STRING)) {
     char* str = copyString(parser.previous.start + 1,
                            parser.previous.length - 2);
-    return new_literal(ND_EXPR_STRING, str, 0.0);    
+    return new_literal(ND_EXPR_STRING, str, 0.0);
+  }
+
+  if (match(TOKEN_IDENTIFIER)) {
+    char* name = copyString(parser.previous.start,
+                            parser.previous.length);
+    return new_literal(ND_EXPR_VARIABLE, name, 0.0);
   }
 
   if (match(TOKEN_LEFT_PAREN)) {
@@ -244,9 +465,21 @@ static Node* primary() {
 Node* parse(const char* source) {
   initScanner(source);
   advance();
-  Node* expr = expression();
-  consume(TOKEN_EOF, "Expect end of expression.");
-  return expr;
+  Node head = {};
+  Node* dummy = &head;
+  while (!match(TOKEN_EOF)) {
+    dummy->next = declaration();
+    dummy = dummy->next;
+  }
+  return head.next;
+}
+
+void printast(Node* ast) {
+  Node* dummy = ast;
+  while (dummy != NULL) {
+    print_ast(dummy, 0);
+    dummy = dummy->next;
+  }
 }
 
 void print_ast(Node* ast, int depth) {
@@ -302,5 +535,42 @@ void print_ast(Node* ast, int depth) {
     printf("%s\n", ast->str);
   } else if (ast->kind == ND_EXPR_FALSE) {
     printf("false\n");
+  } else if (ast->kind == ND_EXPR_VARIABLE) {
+    printf("var(%s)\n", ast->str);
+  } else if (ast->kind == ND_STMT_PRINT) {
+    printf("print -> ");
+    print_ast(ast->rhs, depth);
+  } else if (ast->kind == ND_STMT_VAR) {
+    printf("varDef(%s)", ast->str);
+    if (ast->rhs) {
+      printf(": ");
+      print_ast(ast->rhs, depth+1);
+    } else {
+      printf("\n");
+    }
+  } else if (ast->kind == ND_STMT_EXPRESSION) {
+    print_ast(ast->rhs, depth);
+  } else if (ast->kind == ND_STMT_WHILE) {
+    printf("condition -> ");
+    print_ast(ast->cond, depth);
+    printf("body -> ");
+    Node* dummy = ast->body;
+    while (dummy) {
+      print_ast(dummy, depth);
+      dummy = dummy->next;
+    }
+  } else if (ast->kind == ND_EXPR_ASSIGN) {
+    printf("varAssign(%s) -> ", ast->str);
+    print_ast(ast->rhs, depth);
+  } else if (ast->kind == ND_STMT_BLOCK) {
+    Node* dummy = ast->rhs;
+    while (dummy) {
+      print_ast(dummy, depth);
+      dummy = dummy->next;
+    }
+  } else if (ast->kind == ND_EXPR_LT) {
+    printf("LE -> \n");
+    print_ast(ast->lhs, depth + 1);
+    print_ast(ast->rhs, depth + 1);
   }
 }

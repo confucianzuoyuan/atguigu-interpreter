@@ -67,3 +67,4 @@ struct Node {
 
 Node* parse(const char* source);
 void print_ast(Node* ast, int depth);
+void printast(Node* ast);

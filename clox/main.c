@@ -50,7 +50,7 @@ static char* readFile(const char* path) {
 static void runFile(const char* path) {
   char* source = readFile(path);
   Node* ast = parse(source);
-  print_ast(ast, 0);
+  printast(ast);
   free(source); 
 }
 
