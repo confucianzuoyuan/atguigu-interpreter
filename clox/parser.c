@@ -13,9 +13,11 @@ static Node* unary();
 static Node* primary();
 static Node* statement();
 static Node* printStatement();
+static Node* returnStatement();
 static Node* expressionStatement();
 static Node* declaration();
 static Node* varDeclaration();
+static Node* classDeclaration();
 static Node* ifStatement();
 static Node* whileStatement();
 static Node* forStatement();
@@ -23,6 +25,8 @@ static Node* or();
 static Node* and();
 static Node* assignment();
 static Node* block();
+static Node* function();
+static Node* call();
 
 typedef struct {
   Token current;
@@ -156,10 +160,42 @@ static Node* new_assign(char* name, Node* rhs) {
   return node;
 }
 
+static Node* new_function(char* name, Node* parameters, Node* body) {
+  Node* node = new_node(ND_STMT_FUNCTION);
+  node->funcname = name;
+  node->args = parameters;
+  node->body = body;
+  return node;
+}
+
+static Node* new_class(char* name, Node* superclass, Node* methods) {
+  Node* node = new_node(ND_STMT_CLASS);
+  node->str = name;
+  node->lhs = superclass;
+  node->rhs = methods;
+  return node;
+}
+
+static Node* new_set(Node* object, char* name, Node* value) {
+  Node* node = new_node(ND_EXPR_SET);
+  node->lhs = object;
+  node->str = name;
+  node->rhs = value;
+  return node;
+}
+
+static Node* new_get(Node* object, char* name) {
+  Node* node = new_node(ND_EXPR_GET);
+  node->lhs = object;
+  node->str = name;
+  return node;
+}
+
 static Node* statement() {
   if (match(TOKEN_FOR)) return forStatement();
   if (match(TOKEN_IF)) return ifStatement();
   if (match(TOKEN_PRINT)) return printStatement();
+  if (match(TOKEN_RETURN)) return returnStatement();
   if (match(TOKEN_WHILE)) return whileStatement();
   if (match(TOKEN_LEFT_BRACE)) return new_unary(ND_STMT_BLOCK, block());
 
@@ -267,9 +303,69 @@ static Node* expressionStatement() {
 }
 
 static Node* declaration() {
+  if (match(TOKEN_CLASS)) return classDeclaration();
+  if (match(TOKEN_FUN)) return function();
   if (match(TOKEN_VAR)) return varDeclaration();
 
   return statement();
+}
+
+static Node* classDeclaration() {
+  consume(TOKEN_IDENTIFIER, "Expect function name.");
+
+  char* name = copyString(parser.previous.start,
+                          parser.previous.length);
+
+  Node* superclass = NULL;
+  if (match(TOKEN_LESS)) {
+    consume(TOKEN_IDENTIFIER, "Expect superclass name.");
+    char* superclass_name = copyString(parser.previous.start,
+                            parser.previous.length);
+    superclass = new_literal(ND_EXPR_VARIABLE, superclass_name, 0.0);
+  }
+
+  consume(TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+
+  Node head = {};
+  Node* dummy = &head;
+  while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+    dummy = dummy->next = function();
+  }
+
+  consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+
+  return new_class(name, superclass, head.next);
+}
+
+static Node* function() {
+  consume(TOKEN_IDENTIFIER, "Expect function name.");
+
+  char* name = copyString(parser.previous.start,
+                          parser.previous.length);
+
+  consume(TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+
+  Node head = {};
+  Node* dummy = &head;
+  int params_count = 0;
+
+  if (!check(TOKEN_RIGHT_PAREN)) {
+    do {
+      if (params_count >= 255) {
+        error("Can't have more than 255 parameters.");
+      }
+
+      consume(TOKEN_IDENTIFIER, "Expect parameter name.");
+      char* param_name = copyString(parser.previous.start,
+                                    parser.previous.length);
+      dummy = dummy->next = new_literal(ND_STMT_VAR, param_name, 0.0);
+      params_count++;
+    } while (match(TOKEN_COMMA));
+  }
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+  consume(TOKEN_LEFT_BRACE, "Expect '{' before function body.");
+  Node* body = block();
+  return new_function(name, head.next, body);
 }
 
 static Node* varDeclaration() {
@@ -298,6 +394,9 @@ static Node* assignment() {
 
     if (expr->kind == ND_EXPR_VARIABLE) {
       return new_assign(expr->str, value);
+    } else if (expr->kind == ND_EXPR_GET) {
+      // get.object, get.name, value
+      return new_set(expr->lhs, expr->str, value);
     }
 
     error("Invalid assignment target.");
@@ -430,7 +529,43 @@ static Node* unary() {
     return new_unary(ND_EXPR_NEG, right);
   }
 
-  return primary();
+  return call();
+}
+
+static Node* finishCall(Node* callee) {
+  Node head = {};
+  Node* dummy = &head;
+  int args_count = 0;
+  if (!check(TOKEN_RIGHT_PAREN)) {
+    do {
+      if (args_count >= 255) {
+        error("Can't have more than 255 arguments.");
+      }
+      dummy = dummy->next = expression();
+    } while (match(TOKEN_COMMA));
+  }
+
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+  return new_binary(callee, ND_EXPR_CALL, head.next);
+}
+
+static Node* call() {
+  Node* expr = primary();
+
+  while (true) {
+    if (match(TOKEN_LEFT_PAREN)) {
+      expr = finishCall(expr);
+    } else if (match(TOKEN_DOT)) {
+      consume(TOKEN_IDENTIFIER, "Expect property name after '.'.");
+      char* name = copyString(parser.previous.start,
+                              parser.previous.length);
+      expr = new_get(expr, name);
+    } else {
+      break;
+    }
+  }
+
+  return expr;
 }
 
 static Node* primary() {
@@ -448,6 +583,16 @@ static Node* primary() {
                            parser.previous.length - 2);
     return new_literal(ND_EXPR_STRING, str, 0.0);
   }
+
+  if (match(TOKEN_SUPER)) {
+    consume(TOKEN_DOT, "Expect '.' after 'super'.");
+    consume(TOKEN_IDENTIFIER, "Expect superclass method name.");
+    char* method = copyString(parser.previous.start,
+                              parser.previous.length);
+    return new_literal(ND_EXPR_SUPER, method, 0.0);
+  }
+
+  if (match(TOKEN_THIS)) return new_literal(ND_EXPR_THIS, NULL, 0.0);
 
   if (match(TOKEN_IDENTIFIER)) {
     char* name = copyString(parser.previous.start,
@@ -572,5 +717,22 @@ void print_ast(Node* ast, int depth) {
     printf("LE -> \n");
     print_ast(ast->lhs, depth + 1);
     print_ast(ast->rhs, depth + 1);
+  } else if (ast->kind == ND_STMT_CLASS) {
+    printf("classDef\n");
+    if (ast->lhs) {
+      printf("superclass -> ");
+      print_ast(ast->lhs, depth);
+    }
+    if (ast->rhs) {
+      printf("methods -> \n");
+      Node* methods = ast->rhs;
+      while (methods)
+      {
+          print_ast(methods, depth);
+          methods = methods->next;
+      }
+    }
+  } else if (ast->kind == ND_STMT_FUNCTION) {
+    printf("%s\n", ast->funcname);
   }
 }

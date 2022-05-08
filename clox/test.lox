@@ -12,3 +12,12 @@ while (i < 10) {
   print i;
   i = i + 1;
 }
+class Breakfast {
+  cook() {
+    print "Eggs a-fryin'!";
+  }
+
+  serve(who) {
+    print "Enjoy your breakfast, " + who + ".";
+  }
+}
