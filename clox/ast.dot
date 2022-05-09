@@ -1,0 +1,74 @@
+digraph G {
+node0 [label="+"];
+node1 [label="1.0"];
+node0 -> node1;
+node2 [label="2.0"];
+node0 -> node2;
+node3 [label="+"];
+node4 [label="3.0"];
+node3 -> node4;
+node5 [label="4.0"];
+node3 -> node5;
+node6 [label="varAccess(a)"]
+node7 [label="*"];
+node8 [label="+"];
+node7 -> node8;
+node9 [label="1.0"];
+node8 -> node9;
+node10 [label="2.0"];
+node8 -> node10;
+node11 [label="+"];
+node7 -> node11;
+node12 [label="3.0"];
+node11 -> node12;
+node13 [label="-"]
+node11 -> node13;
+node14 [label="4.0"];
+node13 -> node14;
+node15 [label="varDef(b)"]
+node16 [label="1.0"];
+node15 -> node16;
+node17 [label="varDef(c)"]
+node18 [label="block"]
+node19 [label="varDef(d)"]
+node18 -> node19;
+node20 [label="1.0"];
+node19 -> node20;
+node21 [label="+"];
+node18 -> node21;
+node22 [label="5.0"];
+node21 -> node22;
+node23 [label="7.0"];
+node21 -> node23;
+node24 [label="varDef(e)"]
+node18 -> node24;
+node25 [label="2.0"];
+node24 -> node25;
+node26 [label="function(add)"]
+node27 [label="args"]
+node26 -> node27;
+node28 [label="varDef(i)"]
+node27 -> node28;
+node29 [label="varDef(j)"]
+node27 -> node29;
+node30 [label="varDef(k)"]
+node27 -> node30;
+node31 [label="body"]
+node26 -> node31;
+node32 [label="varDef(l)"]
+node31 -> node32;
+node33 [label="2.0"];
+node32 -> node33;
+node34 [label="return"]
+node31 -> node34;
+node35 [label="+"];
+node34 -> node35;
+node36 [label="+"];
+node35 -> node36;
+node37 [label="varAccess(i)"]
+node36 -> node37;
+node38 [label="varAccess(j)"]
+node36 -> node38;
+node39 [label="varAccess(k)"]
+node35 -> node39;
+}

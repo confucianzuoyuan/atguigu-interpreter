@@ -619,120 +619,144 @@ Node* parse(const char* source) {
   return head.next;
 }
 
+int node_count;
 void printast(Node* ast) {
+  node_count = 0;
+  printf("digraph G {\n");
   Node* dummy = ast;
   while (dummy != NULL) {
-    print_ast(dummy, 0);
+    print_ast(dummy, -1);
     dummy = dummy->next;
   }
+  printf("}");
 }
 
-void print_ast(Node* ast, int depth) {
-  if (ast->kind == ND_EXPR_ADD) {
-    printf("add\n");
-    for (int i = 0; i < depth + 1; i++) {
-      printf("  ");
-    }
-    printf("left -> ");
-    print_ast(ast->lhs, depth + 1);
-    for (int i = 0; i < depth + 1; i++) {
-      printf("  ");
-    }
-    printf("right -> ");
-    print_ast(ast->rhs, depth + 1);
-  } else if (ast->kind == ND_EXPR_NUMBER) {
-    printf("%f\n", ast->val);
-  } else if (ast->kind == ND_EXPR_MUL) {
-    printf("mul\n");
-    for (int i = 0; i < depth + 1; i++) {
-      printf("  ");
-    }
-    printf("left -> ");
-    print_ast(ast->lhs, depth + 1);
-    for (int i = 0; i < depth + 1; i++) {
-      printf("  ");
-    }
-    printf("right -> ");
-    print_ast(ast->rhs, depth + 1);
-  } else if (ast->kind == ND_EXPR_GROUPING) {
-    print_ast(ast->rhs, depth);
-  } else if (ast->kind == ND_EXPR_OR) {
-    for (int i = 0; i < depth; i++) {
-      printf("  ");
-    }
-    printf("or\n");
-    for (int i = 0; i < depth + 1; i++) {
-      printf("  ");
-    }
-    printf("left -> ");
-    print_ast(ast->lhs, depth + 1);
-    for (int i = 0; i < depth + 1; i++) {
-      printf("  ");
-    }
-    printf("right -> ");
-    print_ast(ast->rhs, depth + 1);
-  } else if (ast->kind == ND_EXPR_TRUE) {
-    printf("true\n");
-  } else if (ast->kind == ND_EXPR_NEG) {
-    printf("neg -> ");
-    print_ast(ast->rhs, depth);
-  } else if (ast->kind == ND_EXPR_STRING) {
-    printf("%s\n", ast->str);
-  } else if (ast->kind == ND_EXPR_FALSE) {
-    printf("false\n");
-  } else if (ast->kind == ND_EXPR_VARIABLE) {
-    printf("var(%s)\n", ast->str);
-  } else if (ast->kind == ND_STMT_PRINT) {
-    printf("print -> ");
-    print_ast(ast->rhs, depth);
-  } else if (ast->kind == ND_STMT_VAR) {
-    printf("varDef(%s)", ast->str);
-    if (ast->rhs) {
-      printf(": ");
-      print_ast(ast->rhs, depth+1);
-    } else {
-      printf("\n");
-    }
+void print_ast(Node* ast, int count) {
+  if (ast->kind == ND_EXPR_NUMBER) {
+    int curr_node = node_count;
+    printf("node%d [label=\"%.1f\"];\n", node_count++, ast->val);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+  } else if (ast->kind == ND_EXPR_ADD) {
+    int curr_node = node_count;
+    printf("node%d [label=\"+\"];\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    print_ast(ast->lhs, curr_node);
+    print_ast(ast->rhs, curr_node);
   } else if (ast->kind == ND_STMT_EXPRESSION) {
-    print_ast(ast->rhs, depth);
-  } else if (ast->kind == ND_STMT_WHILE) {
-    printf("condition -> ");
-    print_ast(ast->cond, depth);
-    printf("body -> ");
-    Node* dummy = ast->body;
-    while (dummy) {
-      print_ast(dummy, depth);
-      dummy = dummy->next;
+    print_ast(ast->rhs, count);
+  } else if (ast->kind == ND_EXPR_GROUPING) {
+    print_ast(ast->rhs, count);
+  } else if (ast->kind == ND_EXPR_MUL) {
+    int curr_node = node_count;
+    printf("node%d [label=\"*\"];\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    print_ast(ast->lhs, curr_node);
+    print_ast(ast->rhs, curr_node);
+  } else if (ast->kind == ND_EXPR_DIV) {
+    int curr_node = node_count;
+    printf("node%d [label=\"/\"];\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    print_ast(ast->lhs, curr_node);
+    print_ast(ast->rhs, curr_node);
+  } else if (ast->kind == ND_EXPR_SUB) {
+    int curr_node = node_count;
+    printf("node%d [label=\"-\"];\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    print_ast(ast->lhs, curr_node);
+    print_ast(ast->rhs, curr_node);
+  } else if (ast->kind == ND_EXPR_OR) {
+    int curr_node = node_count;
+    printf("node%d [label=\"or\"];\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    print_ast(ast->lhs, curr_node);
+    print_ast(ast->rhs, curr_node);
+  } else if (ast->kind == ND_EXPR_AND) {
+    int curr_node = node_count;
+    printf("node%d [label=\"and\"];\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    print_ast(ast->lhs, curr_node);
+    print_ast(ast->rhs, curr_node);
+  } else if (ast->kind == ND_EXPR_NEG) {
+    int curr_node = node_count;
+    printf("node%d [label=\"-\"]\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    print_ast(ast->rhs, curr_node);
+  } else if (ast->kind == ND_EXPR_TRUE) {
+    int curr_node = node_count;
+    printf("node%d [label=\"true\"]\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+  } else if (ast->kind == ND_EXPR_FALSE) {
+    int curr_node = node_count;
+    printf("node%d [label=\"false\"]\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+  } else if (ast->kind == ND_EXPR_STRING) {
+    int curr_node = node_count;
+    printf("node%d [label=\"\\\"%s\\\"\"]\n", node_count++, ast->str);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+  } else if (ast->kind == ND_EXPR_VARIABLE) {
+    int curr_node = node_count;
+    printf("node%d [label=\"varAccess(%s)\"]\n", node_count++, ast->str);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+  } else if (ast->kind == ND_STMT_VAR) {
+    int curr_node = node_count;
+    printf("node%d [label=\"varDef(%s)\"]\n", node_count++, ast->str);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    if (ast->rhs) {
+      print_ast(ast->rhs, curr_node);
     }
-  } else if (ast->kind == ND_EXPR_ASSIGN) {
-    printf("varAssign(%s) -> ", ast->str);
-    print_ast(ast->rhs, depth);
   } else if (ast->kind == ND_STMT_BLOCK) {
+    int curr_node = node_count;
+    printf("node%d [label=\"block\"]\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
     Node* dummy = ast->rhs;
     while (dummy) {
-      print_ast(dummy, depth);
+      print_ast(dummy, curr_node);
       dummy = dummy->next;
     }
-  } else if (ast->kind == ND_EXPR_LT) {
-    printf("LE -> \n");
-    print_ast(ast->lhs, depth + 1);
-    print_ast(ast->rhs, depth + 1);
-  } else if (ast->kind == ND_STMT_CLASS) {
-    printf("classDef\n");
-    if (ast->lhs) {
-      printf("superclass -> ");
-      print_ast(ast->lhs, depth);
-    }
-    if (ast->rhs) {
-      printf("methods -> \n");
-      Node* methods = ast->rhs;
-      while (methods)
-      {
-          print_ast(methods, depth);
-          methods = methods->next;
+  } else if (ast->kind == ND_STMT_FUNCTION) {
+    int curr_node = node_count;
+    printf("node%d [label=\"function(%s)\"]\n", node_count++, ast->funcname);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    int args_node = node_count;
+    printf("node%d [label=\"args\"]\n", node_count++);
+    printf("node%d -> node%d;\n", curr_node, args_node);
+    if (ast->args) {
+      Node* dummy = ast->args;
+      while (dummy) {
+        print_ast(dummy, args_node);
+        dummy = dummy->next;
       }
     }
-  } else if (ast->kind == ND_STMT_FUNCTION) {
-    printf("%s\n", ast->funcname);
+    int body_node = node_count;
+    printf("node%d [label=\"body\"]\n", node_count++);
+    printf("node%d -> node%d;\n", curr_node, body_node);
+    if (ast->body) {
+      Node* dummy = ast->body;
+      while (dummy) {
+        print_ast(dummy, body_node);
+        dummy = dummy->next;
+      }
+    }
+  } else if (ast->kind == ND_STMT_RETURN) {
+    int curr_node = node_count;
+    printf("node%d [label=\"return\"]\n", node_count++);
+    if (count != -1)
+      printf("node%d -> node%d;\n", count, curr_node);
+    print_ast(ast->rhs, curr_node);
   }
 }
